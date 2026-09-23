@@ -11,9 +11,7 @@ from database import (
 from job_detail_parser import extract_job_details
 from seek_scraper import (
     HEADERS,
-    SEARCH_URL,
-    extract_jobs,
-    fetch_page,
+    scrape_search_pages,
 )
 
 
@@ -32,25 +30,30 @@ def fetch_detail_page(session, url):
 
 
 def main():
-    # Make sure the database/table exists
     create_tables()
 
-    print("Fetching SEEK search page...\n")
-
-    search_html = fetch_page(
-        SEARCH_URL
-    )
-
-    search_jobs = extract_jobs(
-        search_html
+    session = requests.Session()
+    session.headers.update(
+        HEADERS
     )
 
     print(
-        f"\nFound {len(search_jobs)} unique jobs."
+        "Searching SEEK...\n"
     )
 
-    session = requests.Session()
-    session.headers.update(HEADERS)
+    search_jobs = scrape_search_pages(
+        keyword="Data Analyst",
+        location="Sydney NSW",
+        max_pages=3,
+        session=session,
+    )
+
+    print(
+        f"\nFound "
+        f"{len(search_jobs)} "
+        f"unique jobs."
+    )
+
 
     new_jobs = 0
     skipped_jobs = 0

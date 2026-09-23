@@ -1,18 +1,32 @@
 import json
 import re
 from pathlib import Path
-from urllib.parse import urljoin
+from urllib.parse import urljoin, quote
 
 import requests
 from bs4 import BeautifulSoup
 
-
 BASE_URL = "https://www.seek.com.au"
 
-SEARCH_URL = (
-    "https://www.seek.com.au/"
-    "data-analyst-jobs/in-Sydney-NSW"
-)
+
+def build_search_url(
+    keyword,
+    location,
+    page=1,
+):
+    keyword_slug = keyword.lower().replace(" ", "-")
+    location_slug = location.replace(" ", "-")
+
+    url = (
+        f"{BASE_URL}/"
+        f"{keyword_slug}-jobs/"
+        f"in-{location_slug}"
+    )
+
+    if page > 1:
+        url += f"?page={page}"
+
+    return url
 
 
 HEADERS = {
@@ -26,20 +40,88 @@ HEADERS = {
     "Accept-Language": "en-AU,en;q=0.9",
 }
 
-def fetch_page(url):
-    response = requests.get(
+def fetch_page(
+    url,
+    session=None,
+):
+    client = session or requests
+
+    response = client.get(
         url,
         headers=HEADERS,
         timeout=30,
     )
 
-    print(f"Status code: {response.status_code}")
-    print(f"Response size: {len(response.text):,} characters")
+    print(
+        f"Status code: {response.status_code}"
+    )
 
     response.raise_for_status()
 
     return response.text
 
+def scrape_search_pages(
+    keyword,
+    location,
+    max_pages=3,
+    session=None,
+):
+    all_jobs = {}
+
+    for page in range(
+        1,
+        max_pages + 1,
+    ):
+        print(
+            f"\nFetching page {page}..."
+        )
+
+        url = build_search_url(
+            keyword=keyword,
+            location=location,
+            page=page,
+        )
+
+        html = fetch_page(
+            url=url,
+            session=session,
+        )
+
+        jobs = extract_jobs(
+            html
+        )
+
+        print(
+            f"Page {page}: "
+            f"{len(jobs)} jobs found."
+        )
+
+        new_on_page = 0
+
+        for job in jobs:
+            job_id = job["job_id"]
+
+            if job_id not in all_jobs:
+                all_jobs[job_id] = job
+                new_on_page += 1
+
+        print(
+            f"Page {page}: "
+            f"{new_on_page} new unique jobs."
+        )
+
+        # If a page contributes no new jobs,
+        # we probably reached the end/repeated results.
+        if new_on_page == 0:
+            print(
+                "No new jobs on this page. "
+                "Stopping pagination."
+            )
+            break
+
+    return list(
+        all_jobs.values()
+    )
 
 def save_raw_html(html):
     path = Path("data/raw/seek_search.html")
