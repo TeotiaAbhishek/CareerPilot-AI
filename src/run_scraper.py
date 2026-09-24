@@ -8,52 +8,95 @@ from database import (
     insert_job,
     job_exists,
 )
-from job_detail_parser import extract_job_details
+
 from seek_scraper import (
     HEADERS,
+    RateLimitError,
+    fetch_page,
     scrape_search_pages,
+    extract_job_details,
 )
-
+from config import load_search_config
 
 DETAIL_DELAY_SECONDS = 2
-
-
-def fetch_detail_page(session, url):
-    response = session.get(
-        url,
-        timeout=30,
-    )
-
-    response.raise_for_status()
-
-    return response.text
 
 
 def main():
     create_tables()
 
     session = requests.Session()
-    session.headers.update(
-        HEADERS
+    session.headers.update(HEADERS)
+
+    # Load search settings
+    config = load_search_config()
+
+    location = config["location"]
+    max_pages = config["max_pages"]
+    keywords = config["keywords"]
+
+    all_search_jobs = {}
+
+    for keyword in keywords:
+
+        print("\n" + "=" * 60)
+        print(f"SEARCHING: {keyword}")
+        print("=" * 60)
+
+        try:
+            jobs = scrape_search_pages(
+                keyword=keyword,
+                location=location,
+                max_pages=max_pages,
+                session=session,
+            )
+
+        except RateLimitError as error:
+            print(
+                f"\n⚠ Search stopped for '{keyword}': {error}"
+            )
+
+            print(
+                "SEEK is rate limiting requests. "
+                "Stopping this scraper run."
+            )
+
+            return
+
+        except requests.RequestException as error:
+            print(
+                f"\n✗ Search request failed for "
+                f"'{keyword}': {error}"
+            )
+
+            print(
+                "Stopping this scraper run."
+            )
+
+            return
+
+        print(
+            f"{keyword}: "
+            f"{len(jobs)} unique jobs found"
+        )
+
+        for job in jobs:
+            job_id = job["job_id"]
+
+            if job_id not in all_search_jobs:
+                all_search_jobs[job_id] = job
+
+    search_jobs = list(
+        all_search_jobs.values()
     )
+
+    print("\n" + "=" * 60)
+    print("SEARCH COLLECTION COMPLETE")
+    print("=" * 60)
 
     print(
-        "Searching SEEK...\n"
+        f"Total unique jobs across all searches: "
+        f"{len(search_jobs)}"
     )
-
-    search_jobs = scrape_search_pages(
-        keyword="Data Analyst",
-        location="Sydney NSW",
-        max_pages=3,
-        session=session,
-    )
-
-    print(
-        f"\nFound "
-        f"{len(search_jobs)} "
-        f"unique jobs."
-    )
-
 
     new_jobs = 0
     skipped_jobs = 0
@@ -71,11 +114,10 @@ def main():
             f"{job['company']}"
         )
 
-        # -----------------------------
-        # STEP 1: Check database
-        # -----------------------------
         if job_exists(job_id):
-            print("    → Already in database. Skipping.")
+            print(
+                "    → Already in database. Skipping."
+            )
 
             skipped_jobs += 1
             continue
@@ -83,43 +125,39 @@ def main():
         print("    → NEW JOB")
 
         try:
-            # -----------------------------
-            # STEP 2: Fetch detail page
-            # -----------------------------
-            html = fetch_detail_page(
-                session=session,
+            html = fetch_page(
                 url=job["job_url"],
+                session=session,
             )
 
-            # -----------------------------
-            # STEP 3: Parse detail page
-            # -----------------------------
             details = extract_job_details(
                 html=html,
                 job_id=job_id,
                 job_url=job["job_url"],
             )
 
-            # -----------------------------
-            # STEP 4: Merge search + detail data
-            # -----------------------------
-            complete_job = {
-                **job,
-                **details,
-            }
+            if not details.get("description"):
+                raise ValueError(
+                "Job description could not be parsed."
+            )
+            
+            complete_job = job.copy()
+
+            for key, value in details.items():
+                if value is not None:
+                    complete_job[key] = value
 
             complete_job["date_found"] = (
                 datetime.now()
                 .astimezone()
-                .isoformat(timespec="seconds")
             )
 
-            complete_job["scrape_status"] = "success"
+            complete_job["scrape_status"] = (
+                "success"
+            )
+
             complete_job["scrape_error"] = None
 
-            # -----------------------------
-            # STEP 5: Store in SQLite
-            # -----------------------------
             insert_job(
                 complete_job
             )
@@ -131,8 +169,21 @@ def main():
             )
 
             new_jobs += 1
+        except RateLimitError as error:
+            print(
+                f"\n⚠ Rate limit reached: {error}"
+            )
 
-        except requests.RequestException as error:
+            print(
+                "Stopping detail collection."
+            )
+
+            break
+        except (
+            requests.RequestException,
+            ValueError,
+        ) as error:
+
             print(
                 f"    ✗ Request failed: {error}"
             )
@@ -142,7 +193,6 @@ def main():
                 "date_found": (
                     datetime.now()
                     .astimezone()
-                    .isoformat(timespec="seconds")
                 ),
                 "scrape_status": "failed",
                 "scrape_error": str(error),

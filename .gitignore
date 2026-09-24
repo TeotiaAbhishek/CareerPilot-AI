@@ -1,0 +1,77 @@
+# ============================================================
+# CareerPilot-AI
+# ============================================================
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Python cache / compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# IDE / editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Google OAuth credentials / tokens
+config/google_credentials.json
+config/google_token.json
+credentials.json
+token.json
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# Logs
+*.log
+logs/
+
+# Temporary / generated files
+tmp/
+temp/
+*.tmp
+
+# Generated documents / exports
+*.pdf
+*.docx
+*.doc
+*.odt
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build / package artefacts
+build/
+dist/
+*.egg-info/
+
+# Node artefacts
+node_modules/
+
+# Miscellaneous
+*~

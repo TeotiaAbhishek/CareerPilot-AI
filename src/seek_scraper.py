@@ -1,13 +1,18 @@
-import json
+import time
 import re
-from pathlib import Path
-from urllib.parse import urljoin, quote
+from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
 
+
 BASE_URL = "https://www.seek.com.au"
 
+SEARCH_PAGE_DELAY_SECONDS = 3
+
+
+class RateLimitError(Exception):
+    pass
 
 def build_search_url(
     keyword,
@@ -21,10 +26,11 @@ def build_search_url(
         f"{BASE_URL}/"
         f"{keyword_slug}-jobs/"
         f"in-{location_slug}"
+        f"?sortmode=ListedDate"
     )
 
     if page > 1:
-        url += f"?page={page}"
+        url += f"&page={page}"
 
     return url
 
@@ -40,10 +46,7 @@ HEADERS = {
     "Accept-Language": "en-AU,en;q=0.9",
 }
 
-def fetch_page(
-    url,
-    session=None,
-):
+def fetch_page(url, session=None):
     client = session or requests
 
     response = client.get(
@@ -52,141 +55,16 @@ def fetch_page(
         timeout=30,
     )
 
-    print(
-        f"Status code: {response.status_code}"
-    )
+    print(f"Status code: {response.status_code}")
+
+    if response.status_code == 429:
+        raise RateLimitError(
+            "SEEK rate limit active (HTTP 429)."
+        )
 
     response.raise_for_status()
 
     return response.text
-
-def scrape_search_pages(
-    keyword,
-    location,
-    max_pages=3,
-    session=None,
-):
-    all_jobs = {}
-
-    for page in range(
-        1,
-        max_pages + 1,
-    ):
-        print(
-            f"\nFetching page {page}..."
-        )
-
-        url = build_search_url(
-            keyword=keyword,
-            location=location,
-            page=page,
-        )
-
-        html = fetch_page(
-            url=url,
-            session=session,
-        )
-
-        jobs = extract_jobs(
-            html
-        )
-
-        print(
-            f"Page {page}: "
-            f"{len(jobs)} jobs found."
-        )
-
-        new_on_page = 0
-
-        for job in jobs:
-            job_id = job["job_id"]
-
-            if job_id not in all_jobs:
-                all_jobs[job_id] = job
-                new_on_page += 1
-
-        print(
-            f"Page {page}: "
-            f"{new_on_page} new unique jobs."
-        )
-
-        # If a page contributes no new jobs,
-        # we probably reached the end/repeated results.
-        if new_on_page == 0:
-            print(
-                "No new jobs on this page. "
-                "Stopping pagination."
-            )
-            break
-
-    return list(
-        all_jobs.values()
-    )
-
-def save_raw_html(html):
-    path = Path("data/raw/seek_search.html")
-
-    path.write_text(
-        html,
-        encoding="utf-8",
-    )
-
-    print(f"Raw HTML saved to {path}")
-
-def inspect_card_fields(card):
-
-    print("\n" + "=" * 80)
-    print("FIELDS INSIDE JOB CARD")
-    print("=" * 80)
-
-    elements = card.find_all(
-        attrs={"data-automation": True}
-    )
-
-    for element in elements:
-
-        automation = element.get(
-            "data-automation"
-        )
-
-        text = element.get_text(
-            " ",
-            strip=True,
-        )
-
-        print(
-            f"{automation:40} → {repr(text)}"
-        )
-
-def inspect_ancestor_chain(link):
-    current = link
-
-    for level in range(8):
-
-        if current is None:
-            break
-
-        print("\n" + "=" * 80)
-        print(f"LEVEL {level}")
-        print("=" * 80)
-
-        print("TAG:")
-        print(current.name)
-
-        print("\nATTRIBUTES:")
-        print(current.attrs)
-
-        print("\nTEXT:")
-        print(
-            repr(
-                current.get_text(
-                    " ",
-                    strip=True
-                )[:500]
-            )
-        )
-
-        current = current.parent
 
 def extract_jobs(html):
     soup = BeautifulSoup(
@@ -243,9 +121,6 @@ def extract_jobs(html):
             "classification": get_text(
                 "jobClassification"
             ),
-            "listing_date": get_text(
-                "jobListingDate"
-            ),
             "job_url": (
                 f"{BASE_URL}/job/{job_id}"
             ),
@@ -253,72 +128,205 @@ def extract_jobs(html):
 
     return list(jobs.values())
 
-# def remove_duplicates(jobs):
-#     unique_jobs = {}
+def scrape_search_pages(
+    keyword,
+    location,
+    max_pages=3,
+    session=None,
+):
+    all_jobs = {}
 
-#     for job in jobs:
-#         job_id = job["job_id"]
-
-#         if job_id not in unique_jobs:
-#             unique_jobs[job_id] = job
-
-#     return list(unique_jobs.values())
-
-
-def save_jobs(jobs):
-    path = Path(
-        "data/processed/jobs.json"
-    )
-
-    with path.open(
-        "w",
-        encoding="utf-8",
-    ) as file:
-
-        json.dump(
-            jobs,
-            file,
-            indent=4,
-            ensure_ascii=False,
-        )
-
-    print(
-        f"Saved {len(jobs)} jobs to {path}"
-    )
-
-
-def main():
-
-    print("Fetching SEEK...")
-    print()
-
-    html = fetch_page(
-        SEARCH_URL
-    )
-
-    save_raw_html(html)
-
-    jobs = extract_jobs(html)
-
-    # jobs = remove_duplicates(jobs)
-
-    print()
-    print(f"Found {len(jobs)} jobs.")
-    print()
-
-    for job in jobs[:10]:
+    for page in range(
+        1,
+        max_pages + 1,
+    ):
         print(
-            job["job_id"],
-            "|",
-            job["title"],
-            "|",
-            job["company"],
-            "|",
-            job["location"],
+            f"\nFetching page {page}..."
         )
 
-    save_jobs(jobs)
+        url = build_search_url(
+            keyword=keyword,
+            location=location,
+            page=page,
+        )
+
+        html = fetch_page(
+            url=url,
+            session=session,
+        )
+
+        jobs = extract_jobs(
+            html
+        )
+
+        print(
+            f"Page {page}: "
+            f"{len(jobs)} jobs found."
+        )
+
+        new_on_page = 0
+
+        for job in jobs:
+            job_id = job["job_id"]
+
+            if job_id not in all_jobs:
+                all_jobs[job_id] = job
+                new_on_page += 1
+
+        print(
+            f"Page {page}: "
+            f"{new_on_page} new unique jobs."
+        )
+
+        if new_on_page == 0:
+            print(
+                "No new jobs on this page. "
+                "Stopping pagination."
+            )
+            break
+
+        # Wait before requesting the next search page
+        if page < max_pages:
+            print(
+                f"Waiting "
+                f"{SEARCH_PAGE_DELAY_SECONDS}s "
+                f"before next page..."
+            )
+
+            time.sleep(
+                SEARCH_PAGE_DELAY_SECONDS
+            )
+
+    return list(
+        all_jobs.values()
+    )
+def get_text_by_automation(soup, automation_name):
+    element = soup.find(
+        attrs={"data-automation": automation_name}
+    )
+
+    if element is None:
+        return None
+
+    return element.get_text(
+        " ",
+        strip=True,
+    )
 
 
-if __name__ == "__main__":
-    main()
+def extract_apply_url(soup):
+    apply_element = soup.find(
+        attrs={"data-automation": "job-detail-apply"}
+    )
+
+    if apply_element is None:
+        return None
+
+    href = apply_element.get("href")
+
+    if not href:
+        return None
+
+    return urljoin(
+        BASE_URL,
+        href,
+    )
+
+
+def extract_apply_type(soup):
+    apply_element = soup.find(
+        attrs={"data-automation": "job-detail-apply"}
+    )
+
+    if apply_element is None:
+        return None
+
+    return apply_element.get_text(
+        " ",
+        strip=True,
+    )
+
+
+def extract_posted_date(soup):
+    job_page = soup.find(
+        attrs={"data-automation": "jobDetailsPage"}
+    )
+
+    if job_page is None:
+        return None
+
+    posted_text = job_page.find(
+        string=re.compile(r"^\s*Posted\s+")
+    )
+
+    if posted_text is None:
+        return None
+
+    text = posted_text.strip()
+
+    return re.sub(
+        r"^Posted\s+",
+        "",
+        text,
+    )
+
+
+def extract_job_details(
+    html,
+    job_id=None,
+    job_url=None,
+):
+    soup = BeautifulSoup(
+        html,
+        "html.parser",
+    )
+
+    job = {
+        "job_id": job_id,
+
+        "title": get_text_by_automation(
+            soup,
+            "job-detail-title",
+        ),
+
+        "company": get_text_by_automation(
+            soup,
+            "advertiser-name",
+        ),
+
+        "location": get_text_by_automation(
+            soup,
+            "job-detail-location",
+        ),
+
+        "classification": get_text_by_automation(
+            soup,
+            "job-detail-classifications",
+        ),
+
+        "work_type": get_text_by_automation(
+            soup,
+            "job-detail-work-type",
+        ),
+
+        "description": get_text_by_automation(
+            soup,
+            "jobAdDetails",
+        ),
+
+        "posted": extract_posted_date(
+            soup
+        ),
+
+        "apply_type": extract_apply_type(
+            soup
+        ),
+
+        "apply_url": extract_apply_url(
+            soup
+        ),
+
+        "job_url": job_url,
+    }
+
+    return job
