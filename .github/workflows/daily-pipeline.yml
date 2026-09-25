@@ -1,14 +1,10 @@
-name: CareerPilot Daily Pipeline
+name: CareerPilot SEEK Scraper Test
 
 on:
   workflow_dispatch:
 
-  schedule:
-    - cron: "0 7 * * *"
-      timezone: "Australia/Sydney"
-
 jobs:
-  run-daily:
+  test-scraper:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,7 +21,25 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run CareerPilot daily pipeline
+      - name: Limit scraper to one page for test
+        run: |
+          python - <<'PY'
+          import yaml
+
+          path = "config/scraper_config.yaml"
+
+          with open(path, "r") as f:
+              config = yaml.safe_load(f)
+
+          config["max_pages"] = 1
+
+          with open(path, "w") as f:
+              yaml.safe_dump(config, f, sort_keys=False)
+
+          print("Scraper test configured for 1 page per keyword.")
+          PY
+
+      - name: Run SEEK scraper
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
           DB_PORT: ${{ secrets.DB_PORT }}
@@ -33,11 +47,5 @@ jobs:
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-
-          EMAIL_ADDRESS: ${{ secrets.EMAIL_ADDRESS }}
-          EMAIL_APP_PASSWORD: ${{ secrets.EMAIL_APP_PASSWORD }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-
         run: |
-          python run_daily.py
+          python src/run_scraper.py
