@@ -1,4 +1,6 @@
 import io
+import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -22,6 +24,7 @@ from document_formatter import (
     markdown_to_resume_docx,
     markdown_to_cover_letter_docx,
 )
+
 
 # ============================================================
 # PATHS
@@ -57,62 +60,208 @@ ROOT_FOLDER_NAME = "CareerPilot AI"
 # AUTHENTICATION
 # ============================================================
 
-def get_drive_service():
+def load_google_token():
+    """
+    Load Google OAuth token.
 
-    credentials = None
+    Local development:
+        config/google_token.json
+
+    Deployment:
+        GOOGLE_TOKEN_JSON environment variable
+    """
+
+    token_json = os.getenv(
+        "GOOGLE_TOKEN_JSON"
+    )
+
+    if token_json:
+
+        return (
+            Credentials
+            .from_authorized_user_info(
+                json.loads(
+                    token_json
+                ),
+                SCOPES,
+            )
+        )
 
     if GOOGLE_TOKEN_PATH.exists():
 
-        credentials = (
-            Credentials.from_authorized_user_file(
+        return (
+            Credentials
+            .from_authorized_user_file(
                 GOOGLE_TOKEN_PATH,
                 SCOPES,
             )
         )
+
+    return None
+
+
+def load_google_client_config():
+    """
+    Load Google OAuth client configuration.
+
+    Local development:
+        config/google_credentials.json
+
+    Deployment:
+        GOOGLE_CREDENTIALS_JSON environment variable
+    """
+
+    credentials_json = os.getenv(
+        "GOOGLE_CREDENTIALS_JSON"
+    )
+
+    if credentials_json:
+
+        return json.loads(
+            credentials_json
+        )
+
+    if GOOGLE_CREDENTIALS_PATH.exists():
+
+        with open(
+            GOOGLE_CREDENTIALS_PATH,
+            "r",
+            encoding="utf-8",
+        ) as file:
+
+            return json.load(
+                file
+            )
+
+    return None
+
+
+def save_local_google_token(
+    credentials,
+):
+    """
+    Save OAuth token locally.
+
+    Streamlit Cloud gets its token from
+    GOOGLE_TOKEN_JSON, so deployment does
+    not need to write the token to disk.
+    """
+
+    if os.getenv(
+        "GOOGLE_TOKEN_JSON"
+    ):
+
+        return
+
+    GOOGLE_TOKEN_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    GOOGLE_TOKEN_PATH.write_text(
+        credentials.to_json(),
+        encoding="utf-8",
+    )
+
+
+def get_drive_service():
+
+    credentials = (
+        load_google_token()
+    )
+
+
+    # --------------------------------------------------------
+    # REFRESH EXISTING TOKEN
+    # --------------------------------------------------------
+
+    if (
+        credentials
+        and credentials.expired
+        and credentials.refresh_token
+    ):
+
+        credentials.refresh(
+            Request()
+        )
+
+        save_local_google_token(
+            credentials
+        )
+
+
+    # --------------------------------------------------------
+    # NO VALID TOKEN
+    # --------------------------------------------------------
 
     if (
         not credentials
         or not credentials.valid
     ):
 
+        client_config = (
+            load_google_client_config()
+        )
+
+        if client_config is None:
+
+            raise RuntimeError(
+                "Google OAuth credentials are not configured. "
+                "Provide config/google_credentials.json locally "
+                "or GOOGLE_CREDENTIALS_JSON in deployment."
+            )
+
+
+        # ----------------------------------------------------
+        # STREAMLIT CLOUD
+        # ----------------------------------------------------
+        #
+        # Interactive OAuth cannot run properly on Streamlit
+        # Cloud. A token must first be generated locally and
+        # copied into GOOGLE_TOKEN_JSON.
+        # ----------------------------------------------------
+
         if (
-            credentials
-            and credentials.expired
-            and credentials.refresh_token
+            os.getenv(
+                "GOOGLE_CREDENTIALS_JSON"
+            )
+            or os.getenv(
+                "GOOGLE_TOKEN_JSON"
+            )
         ):
 
-            credentials.refresh(
-                Request()
+            raise RuntimeError(
+                "Google OAuth token is missing or invalid "
+                "in deployment. Generate "
+                "config/google_token.json locally, then copy "
+                "its contents into the GOOGLE_TOKEN_JSON "
+                "Streamlit secret."
             )
 
-        else:
 
-            if not GOOGLE_CREDENTIALS_PATH.exists():
+        # ----------------------------------------------------
+        # LOCAL AUTHORIZATION
+        # ----------------------------------------------------
 
-                raise FileNotFoundError(
-                    "Google OAuth credentials not found at "
-                    f"{GOOGLE_CREDENTIALS_PATH}"
-                )
-
-            flow = (
-                InstalledAppFlow
-                .from_client_secrets_file(
-                    GOOGLE_CREDENTIALS_PATH,
-                    SCOPES,
-                )
+        flow = (
+            InstalledAppFlow
+            .from_client_config(
+                client_config,
+                SCOPES,
             )
-
-            credentials = (
-                flow.run_local_server(
-                    port=0,
-                    open_browser=False,
-                )
-            )
-
-        GOOGLE_TOKEN_PATH.write_text(
-            credentials.to_json(),
-            encoding="utf-8",
         )
+
+        credentials = (
+            flow.run_local_server(
+                port=0,
+                open_browser=False,
+            )
+        )
+
+        save_local_google_token(
+            credentials
+        )
+
 
     return build(
         "drive",
@@ -127,10 +276,13 @@ def get_drive_service():
 
 def clean_file_name(value):
 
-    value = str(value or "")
+    value = str(
+        value
+        or ""
+    )
 
     value = re.sub(
-        r"[\r\n\t]+",
+        r"[**\r\n\t**]+",
         " ",
         value,
     )
@@ -158,7 +310,9 @@ def clean_file_name(value):
 # CAREERPILOT FOLDER
 # ============================================================
 
-def get_or_create_root_folder(service):
+def get_or_create_root_folder(
+    service,
+):
 
     query = (
         f"name = '{ROOT_FOLDER_NAME}' "
@@ -187,13 +341,18 @@ def get_or_create_root_folder(service):
 
         return folders[0]["id"]
 
+
     metadata = {
+
         "name": ROOT_FOLDER_NAME,
+
         "mimeType": (
             "application/"
             "vnd.google-apps.folder"
         ),
+
     }
+
 
     folder = (
         service.files()
@@ -203,6 +362,7 @@ def get_or_create_root_folder(service):
         )
         .execute()
     )
+
 
     return folder["id"]
 
@@ -217,13 +377,16 @@ def safe_delete_file(
 ):
 
     if not file_id:
+
         return
+
 
     try:
 
         service.files().delete(
             fileId=file_id
         ).execute()
+
 
     except Exception as exc:
 
@@ -247,41 +410,47 @@ def create_google_doc(
 ):
 
     file_metadata = {
+
         "name": file_name,
+
         "mimeType": (
             "application/"
             "vnd.google-apps.document"
         ),
+
         "parents": [
             folder_id
         ],
+
     }
 
 
     if document_type == "resume":
-        
+
         source_buffer = (
             markdown_to_resume_docx(
                 markdown
             )
         )
-    
+
+
     elif document_type == "cover":
-    
+
         source_buffer = (
             markdown_to_cover_letter_docx(
                 markdown
             )
         )
-    
+
+
     else:
-    
+
         raise ValueError(
             "document_type must be "
             "'resume' or 'cover'"
         )
-    
-    
+
+
     source_mime = (
         "application/"
         "vnd.openxmlformats-officedocument."
@@ -307,17 +476,24 @@ def create_google_doc(
     )
 
 
-    doc_id = result["id"]
+    doc_id = (
+        result["id"]
+    )
+
 
     doc_url = (
+
         result.get(
             "webViewLink"
         )
+
         or
+
         (
             "https://docs.google.com/"
             f"document/d/{doc_id}/edit"
         )
+
     )
 
 
@@ -344,14 +520,22 @@ def export_google_doc_to_pdf(
         )
     )
 
-    buffer = io.BytesIO()
 
-    downloader = MediaIoBaseDownload(
-        buffer,
-        request,
+    buffer = (
+        io.BytesIO()
     )
 
+
+    downloader = (
+        MediaIoBaseDownload(
+            buffer,
+            request,
+        )
+    )
+
+
     done = False
+
 
     while not done:
 
@@ -359,7 +543,11 @@ def export_google_doc_to_pdf(
             downloader.next_chunk()
         )
 
-    buffer.seek(0)
+
+    buffer.seek(
+        0
+    )
+
 
     return buffer
 
@@ -376,17 +564,22 @@ def upload_pdf(
 ):
 
     metadata = {
+
         "name": file_name,
+
         "parents": [
             folder_id
         ],
+
     }
+
 
     media = MediaIoBaseUpload(
         pdf_buffer,
         mimetype="application/pdf",
         resumable=False,
     )
+
 
     result = (
         service.files()
@@ -398,18 +591,27 @@ def upload_pdf(
         .execute()
     )
 
-    pdf_id = result["id"]
+
+    pdf_id = (
+        result["id"]
+    )
+
 
     pdf_url = (
+
         result.get(
             "webViewLink"
         )
+
         or
+
         (
             "https://drive.google.com/"
             f"file/d/{pdf_id}/view"
         )
+
     )
+
 
     return (
         pdf_id,
@@ -436,9 +638,13 @@ def publish_document(
             "'resume' or 'cover'"
         )
 
-    job = get_job_for_document(
-        job_id
+
+    job = (
+        get_job_for_document(
+            job_id
+        )
     )
+
 
     if not job:
 
@@ -446,11 +652,15 @@ def publish_document(
             f"Job {job_id} not found."
         )
 
+
     documents = (
+
         get_job_documents(
             job_id
         )
+
         or {}
+
     )
 
 
@@ -472,7 +682,10 @@ def publish_document(
             "resume_pdf_id"
         )
 
-        document_label = "Resume"
+        document_label = (
+            "Resume"
+        )
+
 
     else:
 
@@ -505,7 +718,10 @@ def publish_document(
     # GOOGLE DRIVE
     # --------------------------------------------------------
 
-    service = get_drive_service()
+    service = (
+        get_drive_service()
+    )
+
 
     folder_id = (
         get_or_create_root_folder(
@@ -523,6 +739,7 @@ def publish_document(
         old_doc_id,
     )
 
+
     safe_delete_file(
         service,
         old_pdf_id,
@@ -534,14 +751,20 @@ def publish_document(
     # --------------------------------------------------------
 
     company = clean_file_name(
-        job.get("company")
+        job.get(
+            "company"
+        )
         or "Company"
     )
 
+
     title = clean_file_name(
-        job.get("title")
+        job.get(
+            "title"
+        )
         or "Role"
     )
+
 
     base_name = (
         f"{company} - "
@@ -559,13 +782,23 @@ def publish_document(
         f"{base_name}"
     )
 
-    doc_id, doc_url = create_google_doc(
-        service=service,
-        markdown=markdown,
-        file_name=base_name,
-        folder_id=folder_id,
+
+    doc_id, doc_url = (
+        create_google_doc(
+
+            service=service,
+
+            markdown=markdown,
+
+            file_name=base_name,
+
+            folder_id=folder_id,
+
             document_type=document_type,
+
+        )
     )
+
 
     # --------------------------------------------------------
     # EXPORT PDF
@@ -574,6 +807,7 @@ def publish_document(
     print(
         "Exporting PDF..."
     )
+
 
     pdf_buffer = (
         export_google_doc_to_pdf(
@@ -588,14 +822,21 @@ def publish_document(
     # --------------------------------------------------------
 
     pdf_id, pdf_url = (
+
         upload_pdf(
+
             service=service,
+
             pdf_buffer=pdf_buffer,
+
             file_name=(
                 f"{base_name}.pdf"
             ),
+
             folder_id=folder_id,
+
         )
+
     )
 
 
@@ -604,20 +845,32 @@ def publish_document(
     # --------------------------------------------------------
 
     save_document_drive_files(
+
         job_id=job_id,
+
         document_type=document_type,
+
         doc_id=doc_id,
+
         doc_url=doc_url,
+
         pdf_id=pdf_id,
+
         pdf_url=pdf_url,
+
     )
 
 
     return {
+
         "doc_id": doc_id,
+
         "doc_url": doc_url,
+
         "pdf_id": pdf_id,
+
         "pdf_url": pdf_url,
+
     }
 
 
@@ -627,7 +880,9 @@ def publish_document(
 
 if __name__ == "__main__":
 
-    if len(sys.argv) != 3:
+    if len(
+        sys.argv
+    ) != 3:
 
         print(
             "Usage:"
@@ -639,24 +894,37 @@ if __name__ == "__main__":
             "cover <job_id>"
         )
 
-        raise SystemExit(1)
+        raise SystemExit(
+            1
+        )
 
 
     document_type = (
+
         sys.argv[1]
+
         .strip()
+
         .lower()
+
     )
 
+
     job_id = (
+
         sys.argv[2]
+
         .strip()
+
     )
 
 
     result = publish_document(
+
         job_id=job_id,
+
         document_type=document_type,
+
     )
 
 
@@ -664,10 +932,12 @@ if __name__ == "__main__":
         "\nDone!"
     )
 
+
     print(
         f'Google Doc: '
         f'{result["doc_url"]}'
     )
+
 
     print(
         f'PDF: '
