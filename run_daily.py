@@ -3,20 +3,14 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from src.integrations.emailer import send_email
+
 
 # ============================================================
 # PROJECT SETUP
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_PATH = PROJECT_ROOT / "src"
-
-sys.path.append(
-    str(SRC_PATH)
-)
-
-from emailer import send_email
-
 
 PYTHON = sys.executable
 
@@ -27,7 +21,7 @@ PYTHON = sys.executable
 
 def run_step(
     name,
-    script_path,
+    module_name,
 ):
     print()
     print("=" * 60)
@@ -37,7 +31,8 @@ def run_step(
     result = subprocess.run(
         [
             PYTHON,
-            str(script_path),
+            "-m",
+            module_name,
         ],
         cwd=PROJECT_ROOT,
         capture_output=True,
@@ -52,14 +47,12 @@ def run_step(
         result.stderr.strip()
     )
 
-
-    # Still show everything in the terminal
+    # Show subprocess output in the main log.
     if stdout:
         print(stdout)
 
     if stderr:
         print(stderr)
-
 
     log = (
         f"{name}\n"
@@ -77,15 +70,12 @@ def run_step(
             f"{stderr}\n"
         )
 
-
     if result.returncode != 0:
-
         raise RuntimeError(
             f"{name} failed with exit code "
             f"{result.returncode}\n\n"
             f"{log}"
         )
-
 
     return log
 
@@ -103,22 +93,18 @@ def send_pipeline_report(
     )
 
     if success:
-
         subject = (
             "CareerPilot Daily Report "
             f"- {date_text} - SUCCESS"
         )
 
     else:
-
         subject = (
             "CareerPilot Daily Report "
             f"- {date_text} - FAILED"
         )
 
-
     try:
-
         send_email(
             subject=subject,
             body=body,
@@ -130,9 +116,8 @@ def send_pipeline_report(
         )
 
     except Exception as exc:
-
-        # Email failure should not hide the actual
-        # pipeline result.
+        # Email failure should not hide
+        # the actual pipeline result.
         print()
         print(
             "Warning: Could not send "
@@ -158,15 +143,12 @@ def main():
 
         scraper_log = run_step(
             "1. SEEK SCRAPER",
-            PROJECT_ROOT
-            / "src"
-            / "run_scraper.py",
+            "src.scraper.run_scraper",
         )
 
         logs.append(
             scraper_log
         )
-
 
         # ----------------------------------------------------
         # STEP 2 - RELEVANCE
@@ -174,15 +156,12 @@ def main():
 
         relevance_log = run_step(
             "2. RELEVANCE ANALYSIS",
-            PROJECT_ROOT
-            / "src"
-            / "relevance.py",
+            "src.intelligence.relevance",
         )
 
         logs.append(
             relevance_log
         )
-
 
         # ----------------------------------------------------
         # SUCCESS
@@ -194,7 +173,6 @@ def main():
             finished_at
             - started_at
         )
-
 
         report = (
             "CareerPilot daily pipeline completed "
@@ -208,7 +186,6 @@ def main():
             + "\n\n".join(logs)
         )
 
-
         print()
         print("=" * 60)
         print(
@@ -216,12 +193,10 @@ def main():
         )
         print("=" * 60)
 
-
         send_pipeline_report(
             success=True,
             body=report,
         )
-
 
     except Exception as exc:
 
@@ -231,7 +206,6 @@ def main():
             finished_at
             - started_at
         )
-
 
         report = (
             "CareerPilot daily pipeline FAILED.\n\n"
@@ -245,15 +219,12 @@ def main():
             f"{exc}\n\n"
         )
 
-
         if logs:
-
             report += (
                 "COMPLETED STEPS\n"
                 "===============\n\n"
                 + "\n\n".join(logs)
             )
-
 
         print()
         print("=" * 60)
@@ -264,12 +235,10 @@ def main():
 
         print(exc)
 
-
         send_pipeline_report(
             success=False,
             body=report,
         )
-
 
         raise
 

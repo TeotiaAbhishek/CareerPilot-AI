@@ -1,9 +1,0 @@
-.venv
-.git
-.gitignore
-.env
-__pycache__
-*.pyc
-config/google_credentials.json
-config/google_token.json
-logs

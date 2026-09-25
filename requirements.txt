@@ -6,7 +6,6 @@ python-dotenv
 openai
 pydantic
 streamlit>=1.64.0
-pandas
 google-auth
 google-api-python-client
 google-auth-httplib2

@@ -3,8 +3,12 @@ from pathlib import Path
 import yaml
 
 
-CONFIG_PATH = Path(
-    "config/searches.yaml"
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+CONFIG_PATH = (
+    PROJECT_ROOT
+    / "config"
+    / "searches.yaml"
 )
 
 
@@ -13,5 +17,4 @@ def load_search_config():
         "r",
         encoding="utf-8",
     ) as file:
-
         return yaml.safe_load(file)

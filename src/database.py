@@ -70,6 +70,56 @@ def create_tables():
         )
         """
     )
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS job_documents (
+            job_id TEXT PRIMARY KEY
+                REFERENCES jobs(job_id)
+                ON DELETE CASCADE,
+
+            resume_markdown TEXT,
+            resume_doc_id TEXT,
+            resume_doc_url TEXT,
+            resume_pdf_id TEXT,
+            resume_pdf_url TEXT,
+            resume_generated_at TIMESTAMPTZ,
+
+            cover_letter_markdown TEXT,
+            cover_letter_doc_id TEXT,
+            cover_letter_doc_url TEXT,
+            cover_letter_pdf_id TEXT,
+            cover_letter_pdf_url TEXT,
+            cover_letter_generated_at TIMESTAMPTZ,
+
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS applications (
+            job_id TEXT PRIMARY KEY
+                REFERENCES jobs(job_id)
+                ON DELETE CASCADE,
+
+            status TEXT NOT NULL DEFAULT 'applied'
+                CHECK (
+                    status IN (
+                        'applied',
+                        'interview',
+                        'rejected',
+                        'offer',
+                        'withdrawn'
+                    )
+                ),
+
+            applied_at TIMESTAMPTZ DEFAULT NOW(),
+
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+        """
+    )
 
     connection.commit()
     cursor.close()

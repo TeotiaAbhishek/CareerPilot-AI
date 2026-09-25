@@ -11,22 +11,25 @@ import streamlit as st
 # ============================================================
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SRC_PATH = PROJECT_ROOT / "src"
 
-sys.path.append(str(SRC_PATH))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(
+        0,
+        str(PROJECT_ROOT),
+    )
 
-from database import (
+from src.database import (
     get_kept_jobs,
     get_job_documents,
     mark_job_applied,
 )
 
-from document_generator import (
+from src.intelligence.document_generator import (
     generate_resume_markdown,
     generate_cover_letter_markdown,
 )
 
-from google_drive import (
+from src.integrations.google_drive import (
     publish_document,
 )
 
