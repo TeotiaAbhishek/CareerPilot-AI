@@ -18,6 +18,7 @@ sys.path.append(str(SRC_PATH))
 from database import (
     get_kept_jobs,
     get_job_documents,
+    mark_job_applied,
 )
 
 from document_generator import (
@@ -1688,6 +1689,25 @@ with right_panel:
                         use_container_width=True,
                         type="primary",
                     )
+
+                if st.button(
+                    "✓ Mark applied",
+                    key=(
+                        "mark_applied_"
+                        f'{selected_job["job_id"]}'
+                    ),
+                    use_container_width=True,
+                ):
+
+                    mark_job_applied(
+                        selected_job[
+                            "job_id"
+                        ]
+                    )
+
+                    load_jobs.clear()
+
+                    st.rerun()
 
 
         # ====================================================

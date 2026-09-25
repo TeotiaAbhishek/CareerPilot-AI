@@ -264,8 +264,14 @@ def get_kept_jobs():
                 JOIN job_analysis a
                     ON j.job_id = a.job_id
 
-                WHERE a.kept = TRUE
+                LEFT JOIN applications app
+                    ON j.job_id = app.job_id
 
+                WHERE a.kept = TRUE
+                AND ( 
+                    app.status is NULL
+                    OR app.status != 'applied'
+                )
                 ORDER BY
                     a.relevance_score DESC,
                     j.date_found DESC
@@ -460,3 +466,56 @@ def save_document_drive_files(
             )
 
         connection.commit()
+
+def mark_job_applied(job_id):
+    with get_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO applications (
+                    job_id,
+                    status,
+                    applied_at,
+                    updated_at
+                )
+                VALUES (
+                    %s,
+                    'applied',
+                    NOW(),
+                    NOW()
+                )
+
+                ON CONFLICT(job_id) DO UPDATE SET
+                    status = 'applied',
+                    applied_at = COALESCE(
+                        applications.applied_at,
+                        NOW()
+                    ),
+                    updated_at = NOW()
+                """,
+                (job_id,),
+            )
+
+        connection.commit()
+
+
+def get_application(job_id):
+    with get_connection() as connection:
+        with connection.cursor(
+            row_factory=dict_row
+        ) as cursor:
+
+            cursor.execute(
+                """
+                SELECT
+                    job_id,
+                    status,
+                    applied_at,
+                    updated_at
+                FROM applications
+                WHERE job_id = %s
+                """,
+                (job_id,),
+            )
+
+            return cursor.fetchone()
