@@ -38,7 +38,37 @@ jobs:
 
           print("Scraper test configured for 1 page per keyword.")
           PY
+      
+      - name: Test database configuration
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
 
+        run: |
+          python - <<'PY'
+          import os
+          import socket
+
+          host = os.environ.get("DB_HOST", "")
+          port = os.environ.get("DB_PORT", "")
+
+          print("DB_HOST secret present:", bool(host))
+          print("DB_PORT secret present:", bool(port))
+          print("DB_HOST contains DB_HOST=:", host.startswith("DB_HOST="))
+          print("DB_HOST contains protocol:", "://" in host)
+
+          try:
+              socket.getaddrinfo(host, int(port))
+              print("Database hostname resolves successfully.")
+          except Exception as e:
+              print("Database hostname resolution FAILED.")
+              print(type(e).__name__, str(e))
+              raise
+          PY
+      
       - name: Run SEEK scraper
         env:
           DB_HOST: ${{ secrets.DB_HOST }}
