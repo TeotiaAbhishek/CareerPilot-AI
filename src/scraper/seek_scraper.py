@@ -46,25 +46,66 @@ HEADERS = {
     "Accept-Language": "en-AU,en;q=0.9",
 }
 
-def fetch_page(url, session=None):
+def fetch_page(
+    url,
+    session=None,
+    max_retries=3,
+):
     client = session or requests
 
-    response = client.get(
-        url,
-        headers=HEADERS,
-        timeout=30,
-    )
+    for attempt in range(
+        1,
+        max_retries + 1,
+    ):
+        try:
+            response = client.get(
+                url,
+                headers=HEADERS,
+                timeout=30,
+            )
 
-    print(f"Status code: {response.status_code}")
+            print(
+                f"Status code: "
+                f"{response.status_code}"
+            )
 
-    if response.status_code == 429:
-        raise RateLimitError(
-            "SEEK rate limit active (HTTP 429)."
-        )
+            if response.status_code == 429:
+                raise RateLimitError(
+                    "SEEK rate limit active "
+                    "(HTTP 429)."
+                )
 
-    response.raise_for_status()
+            response.raise_for_status()
 
-    return response.text
+            return response.text
+
+        except RateLimitError:
+            raise
+
+        except requests.RequestException as error:
+            if attempt == max_retries:
+                raise
+
+            wait_seconds = (
+                5 * attempt
+            )
+
+            print(
+                f"Request failed "
+                f"(attempt "
+                f"{attempt}/"
+                f"{max_retries}): "
+                f"{error}"
+            )
+
+            print(
+                f"Retrying in "
+                f"{wait_seconds}s..."
+            )
+
+            time.sleep(
+                wait_seconds
+            )
 
 def extract_jobs(html):
     soup = BeautifulSoup(

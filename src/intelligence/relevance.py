@@ -15,7 +15,6 @@ MASTER_RESUME_PATH = PROJECT_ROOT / "data" / "master_resume.md"
 
 MODEL = "gpt-5.6-luna"
 RELEVANCE_THRESHOLD = 60
-BATCH_SIZE = 100
 
 
 class JobAnalysis(BaseModel):
@@ -355,9 +354,7 @@ def main():
     resume = load_master_resume()
     candidate_profile = load_candidate_profile()
 
-    jobs = get_unanalysed_jobs(
-        limit = BATCH_SIZE
-    )
+    jobs = get_unanalysed_jobs()
 
     if not jobs:
         print("No unanalysed jobs found.")

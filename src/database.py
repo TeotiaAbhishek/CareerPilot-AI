@@ -222,7 +222,7 @@ def insert_job(job):
     connection.close()
 
 
-def get_unanalysed_jobs(limit=25):
+def get_unanalysed_jobs():
     with get_connection() as connection:
         with connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
@@ -241,9 +241,7 @@ def get_unanalysed_jobs(limit=25):
                   AND j.description IS NOT NULL
                   AND a.job_id IS NULL
                 ORDER BY j.date_found DESC
-                LIMIT %s
                 """,
-                (limit,),
             )
 
             return cursor.fetchall()
