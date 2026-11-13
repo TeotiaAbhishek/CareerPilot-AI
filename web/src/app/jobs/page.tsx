@@ -1,16 +1,17 @@
-import { Briefcase } from "lucide-react";
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
+import { JobsView } from "@/components/jobs/jobs-view";
+import { JobListSkeleton } from "@/components/jobs/job-list";
 
 export const metadata: Metadata = { title: "Jobs" };
 
-export default function Page() {
+export default function JobsPage() {
+  // JobsView reads the URL's ?query, which isn't known when the page is
+  // pre-rendered, so it renders inside Suspense with a skeleton as fallback.
   return (
-    <>
-      <PageHeader title="Jobs" description="Every SEEK job CareerPilot has found, scored for fit." />
-      <EmptyState icon={Briefcase} title="No jobs yet" description="The SEEK scraper arrives in the next feature. Jobs will appear here automatically." />
-    </>
+    <Suspense fallback={<JobListSkeleton />}>
+      <JobsView />
+    </Suspense>
   );
 }

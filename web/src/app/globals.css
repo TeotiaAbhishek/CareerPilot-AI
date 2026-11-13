@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Nicely formatted long text (job descriptions): the `prose` class. */
+@plugin "@tailwindcss/typography";
+
 /* Dark mode is switched by a `dark` class on <html> (set by next-themes). */
 @custom-variant dark (&:where(.dark, .dark *));
 
