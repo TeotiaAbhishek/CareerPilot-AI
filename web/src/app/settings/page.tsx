@@ -1,16 +1,19 @@
-import { Settings } from "lucide-react";
 import type { Metadata } from "next";
 
-import { EmptyState } from "@/components/ui/empty-state";
+import { ScrapeOverview } from "@/components/settings/scrape-overview";
+import { SearchesManager } from "@/components/settings/searches-manager";
 import { PageHeader } from "@/components/ui/page-header";
 
 export const metadata: Metadata = { title: "Settings" };
 
-export default function Page() {
+export default function SettingsPage() {
   return (
     <>
-      <PageHeader title="Settings" description="Search terms, models and schedules." />
-      <EmptyState icon={Settings} title="Nothing to configure yet" description="Scraper searches, Ollama model choice and schedules will be configurable here." />
+      <PageHeader title="Settings" description="What to search for, and when." />
+      <div className="flex flex-col gap-6">
+        <SearchesManager />
+        <ScrapeOverview />
+      </div>
     </>
   );
 }

@@ -1,0 +1,215 @@
+"use client";
+
+import {
+  Bookmark,
+  BriefcaseBusiness,
+  Clock,
+  DollarSign,
+  ExternalLink,
+  EyeOff,
+  MapPin,
+  TriangleAlert,
+  Zap,
+} from "lucide-react";
+import { useEffect } from "react";
+import { toast } from "sonner";
+
+import { Badge } from "@/components/ui/badge";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useApi } from "@/hooks/use-api";
+import { type JobDetail, type JobPatch, errorMessage, patchJob } from "@/lib/api";
+import { formatDateTime, timeAgo } from "@/lib/format";
+import { cn } from "@/lib/utils";
+
+/**
+ * One job in full. Used both in the right-hand pane of /jobs and on /jobs/[id].
+ * Opening a job marks it as viewed. `onChange` tells the list about any change.
+ */
+export function JobDetailView({
+  id,
+  onChange,
+}: {
+  id: string;
+  onChange?: (job: JobDetail) => void;
+}) {
+  const { data: job, error, loading, mutate } = useApi<JobDetail>(
+    `/api/jobs/${encodeURIComponent(id)}`,
+  );
+  const current = job?.id === id ? job : undefined;
+
+  // Mark as viewed the first time it's opened.
+  useEffect(() => {
+    if (!current || current.viewed_at) return;
+    patchJob(current.id, { viewed: true }).then(
+      (updated) => {
+        mutate(() => updated);
+        onChange?.(updated);
+      },
+      () => {
+        // Not worth bothering the user about.
+      },
+    );
+  }, [current, mutate, onChange]);
+
+  async function update(patch: JobPatch, success: string, undo?: JobPatch) {
+    if (!current) return;
+    try {
+      const updated = await patchJob(current.id, patch);
+      mutate(() => updated);
+      onChange?.(updated);
+      toast.success(success, {
+        action: undo
+          ? { label: "Undo", onClick: () => void update(undo, "Undone") }
+          : undefined,
+      });
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-danger/30 bg-danger/5 p-6 text-sm text-danger">
+        {error}
+      </div>
+    );
+  }
+  if (loading || !current) return <JobDetailSkeleton />;
+
+  const quickApply = current.apply_type?.toLowerCase().includes("quick");
+
+  return (
+    <article className="rounded-xl border bg-card">
+      <header className="border-b p-6">
+        <div className="flex flex-wrap items-center gap-2">
+          {quickApply ? (
+            <Badge tone="primary">
+              <Zap className="size-3" aria-hidden /> Quick apply
+            </Badge>
+          ) : null}
+          {current.legacy_score !== null ? (
+            <Badge tone={current.legacy_score >= 60 ? "success" : "neutral"} title="Score from CareerPilot v1 (OpenAI). Replaced by Ollama scoring in F3.">
+              v1 score {current.legacy_score}
+            </Badge>
+          ) : (
+            <Badge>Not scored yet</Badge>
+          )}
+          {current.hidden ? <Badge tone="warning">Hidden</Badge> : null}
+        </div>
+
+        <h2 className="mt-3 text-xl font-semibold tracking-tight">{current.title}</h2>
+        <p className="mt-1 text-muted-foreground">{current.company ?? "Company not listed"}</p>
+
+        <dl className="mt-4 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+          <Meta icon={MapPin} label="Location" value={current.location} />
+          <Meta icon={BriefcaseBusiness} label="Work type" value={current.work_type} />
+          <Meta icon={DollarSign} label="Salary" value={current.salary} />
+          <Meta
+            icon={Clock}
+            label="Posted"
+            value={current.posted_label ? `Posted ${current.posted_label}` : `Found ${timeAgo(current.first_seen_at)}`}
+          />
+        </dl>
+
+        <div className="mt-5 flex flex-wrap gap-2">
+          <a
+            href={current.job_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={buttonVariants()}
+          >
+            <ExternalLink /> View on SEEK
+          </a>
+          <Button
+            variant="outline"
+            aria-pressed={current.saved}
+            onClick={() =>
+              update(
+                { saved: !current.saved },
+                current.saved ? "Removed from saved" : "Saved",
+              )
+            }
+          >
+            <Bookmark className={cn(current.saved && "fill-primary text-primary")} />
+            {current.saved ? "Saved" : "Save"}
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              current.hidden
+                ? update({ hidden: false }, "Job is visible again")
+                : update({ hidden: true }, "Job hidden", { hidden: false })
+            }
+          >
+            <EyeOff /> {current.hidden ? "Unhide" : "Hide"}
+          </Button>
+        </div>
+      </header>
+
+      {current.scrape_status === "failed" ? (
+        <div className="m-6 mb-0 flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">
+          <TriangleAlert className="size-4 shrink-0 text-warning" aria-hidden />
+          <p>
+            We couldn&apos;t load this job&apos;s full description
+            {current.scrape_error ? ` (${current.scrape_error})` : ""}. The next scrape will try
+            again, or open it on SEEK.
+          </p>
+        </div>
+      ) : null}
+
+      {current.description_html ? (
+        <div
+          className="prose prose-sm max-w-none p-6 dark:prose-invert prose-headings:font-semibold prose-a:text-primary"
+          // Safe: the backend cleans this HTML with ammonia before storing it.
+          dangerouslySetInnerHTML={{ __html: current.description_html }}
+        />
+      ) : current.description_text ? (
+        <p className="whitespace-pre-line p-6 text-sm leading-relaxed">{current.description_text}</p>
+      ) : (
+        <p className="p-6 text-sm text-muted-foreground">No description.</p>
+      )}
+
+      <footer className="border-t px-6 py-3 text-xs text-muted-foreground">
+        SEEK job {current.id} · first found {formatDateTime(current.first_seen_at)} · last seen{" "}
+        {timeAgo(current.last_seen_at)}
+      </footer>
+    </article>
+  );
+}
+
+function Meta({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof MapPin;
+  label: string;
+  value: string | null;
+}) {
+  if (!value) return null;
+  return (
+    <div className="flex items-center gap-2">
+      <dt className="sr-only">{label}</dt>
+      <Icon className="size-4 shrink-0" aria-hidden />
+      <dd className="truncate">{value}</dd>
+    </div>
+  );
+}
+
+export function JobDetailSkeleton() {
+  return (
+    <div className="rounded-xl border bg-card p-6" aria-busy="true">
+      <Skeleton className="h-5 w-24" />
+      <Skeleton className="mt-4 h-6 w-3/4" />
+      <Skeleton className="mt-2 h-4 w-1/3" />
+      <div className="mt-6 grid gap-2 sm:grid-cols-2">
+        <Skeleton className="h-4" />
+        <Skeleton className="h-4" />
+        <Skeleton className="h-4" />
+        <Skeleton className="h-4" />
+      </div>
+      <Skeleton className="mt-8 h-40 w-full" />
+    </div>
+  );
+}

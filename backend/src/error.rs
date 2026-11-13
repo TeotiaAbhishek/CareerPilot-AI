@@ -15,6 +15,9 @@ pub enum AppError {
     #[error("{0}")]
     BadRequest(String),
 
+    #[error("{0}")]
+    Conflict(String),
+
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 
@@ -27,6 +30,7 @@ impl IntoResponse for AppError {
         let (status, message) = match &self {
             AppError::NotFound(m) => (StatusCode::NOT_FOUND, m.clone()),
             AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
+            AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
             // Never leak database or internal details to the client.
             AppError::Database(_) | AppError::Other(_) => {
                 tracing::error!(error = ?self, "internal error");
@@ -39,6 +43,11 @@ impl IntoResponse for AppError {
 
         (status, Json(json!({ "error": message }))).into_response()
     }
+}
+
+/// True when a database error is a unique-constraint violation (duplicate).
+pub fn is_unique_violation(error: &sqlx::Error) -> bool {
+    matches!(error, sqlx::Error::Database(db) if db.code().as_deref() == Some("23505"))
 }
 
 pub type AppResult<T> = Result<T, AppError>;

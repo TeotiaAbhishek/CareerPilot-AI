@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils";
 
 const FEATURES = [
   { name: "Foundation and design system", done: true },
-  { name: "Jobs: SEEK scraper, list and detail", done: false },
+  { name: "Jobs: SEEK scraper, list and detail", done: true },
   { name: "Relevance scoring with Ollama", done: false },
   { name: "Profile, facts and password vault", done: false },
   { name: "Tailored documents on Apply", done: false },
