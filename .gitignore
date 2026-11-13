@@ -75,3 +75,5 @@ node_modules/
 
 # Miscellaneous
 *~
+# Rust build output (CareerPilot v2 backend)
+target/

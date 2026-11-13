@@ -1,0 +1,25 @@
+# Local development database for CareerPilot v2.
+# Start:  docker compose up -d      Stop:  docker compose down
+# Data survives restarts in the named volume. `docker compose down -v` wipes it.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    container_name: careerpilot-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: careerpilot
+      POSTGRES_PASSWORD: careerpilot
+      POSTGRES_DB: careerpilot
+    ports:
+      # 5433 on your machine, so it never clashes with mini-Dify's Postgres on 5432.
+      - "5433:5432"
+    volumes:
+      - careerpilot-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U careerpilot -d careerpilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  careerpilot-db:
