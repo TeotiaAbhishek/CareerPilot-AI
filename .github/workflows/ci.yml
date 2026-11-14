@@ -78,3 +78,25 @@ jobs:
       - run: npm run build
         env:
           NEXT_TELEMETRY_DISABLED: 1
+
+  browser-worker:
+    name: Browser worker (Playwright)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: browser-worker
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: browser-worker/package-lock.json
+
+      - run: npm ci
+      # Chromium plus the Linux libraries it needs. Tests run it headless.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run typecheck
+      - run: npm test

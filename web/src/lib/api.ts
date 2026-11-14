@@ -165,6 +165,10 @@ export type Settings = {
   relevance_threshold: number;
   drafting_model: string;
   drafting_think: boolean;
+  apply_parallel: number;
+  apply_daily_cap: number;
+  apply_model: string;
+  apply_think: boolean;
   updated_at: string;
 };
 
@@ -437,6 +441,100 @@ export type DrafterStatus = {
 
 export type PrepareInput = { resume?: boolean; cover_letter?: boolean; note?: string };
 
+export type ApplicationStatus =
+  | "queued"
+  | "running"
+  | "waiting_for_you"
+  | "ready_to_submit"
+  | "needs_manual"
+  | "submitted"
+  | "failed"
+  | "cancelled";
+
+export type ManualReason = "captcha" | "login" | "stuck" | "cover_letter" | "step_limit";
+
+export type Application = {
+  id: string;
+  job_id: string;
+  status: ApplicationStatus;
+  manual_reason: ManualReason | null;
+  message: string | null;
+  start_url: string;
+  current_url: string | null;
+  tab_id: string | null;
+  resume_id: string | null;
+  cover_letter_id: string | null;
+  steps: number;
+  practice: boolean;
+  started_at: string | null;
+  ready_at: string | null;
+  submitted_at: string | null;
+  created_at: string;
+  updated_at: string;
+  job_title: string;
+  company: string | null;
+  open_questions: number;
+};
+
+export type QuestionKind =
+  | "text"
+  | "textarea"
+  | "email"
+  | "tel"
+  | "number"
+  | "date"
+  | "url"
+  | "select"
+  | "radio"
+  | "checkbox";
+
+export type ApplicationQuestion = {
+  id: string;
+  label: string;
+  kind: QuestionKind;
+  options: string[];
+  answer: string | null;
+  answered_at: string | null;
+  /** False for the agent's own questions (e.g. "Include a cover letter?"): they only count for this run. */
+  savable: boolean;
+};
+
+export type RunEventKind = "info" | "fill" | "model" | "written" | "answer" | "click" | "warn" | "error";
+
+export type RunEvent = {
+  id: number;
+  application_id: string;
+  kind: RunEventKind;
+  message: string;
+  at: string;
+};
+
+export type ApplicationView = Application & {
+  questions: ApplicationQuestion[];
+  events: RunEvent[];
+};
+
+/** What the run page receives live (Server-Sent Events). */
+export type LiveEvent =
+  | ({ type: "log" } & RunEvent)
+  | { type: "status"; application_id: string; status: ApplicationStatus };
+
+export type ApplyStatus = {
+  worker_url: string;
+  worker_ok: boolean;
+  worker_error: string | null;
+  running: number;
+  queued: number;
+  waiting_for_you: number;
+  ready_to_submit: number;
+  started_today: number;
+  daily_cap: number;
+  parallel: number;
+  paused_reason: string | null;
+};
+
+export type AnswerSubmission = { question_id: string; answer: string; save: boolean };
+
 // ---------- Endpoints ----------
 
 export const getHealth = (init?: RequestInit) => apiGet<Health>("/api/health", init);
@@ -478,3 +576,15 @@ export const saveDocument = (id: string, content: ResumeDraft | LetterDraft, dis
 export const approveDocument = (id: string) => apiSend<DocumentView>("POST", `/api/documents/${id}/approve`);
 /** A plain link downloads the Word file (the API sets the file name). */
 export const docxUrl = (id: string) => `${API_URL}/api/documents/${id}/docx`;
+export const startApplication = (jobId: string) =>
+  apiSend<ApplicationView>("POST", `/api/jobs/${encodeURIComponent(jobId)}/apply`);
+export const startPractice = () => apiSend<ApplicationView>("POST", "/api/applications/practice");
+export const answerQuestions = (id: string, answers: AnswerSubmission[]) =>
+  apiSend<ApplicationView>("POST", `/api/applications/${id}/answers`, { answers });
+export const retryApplication = (id: string) => apiSend<ApplicationView>("POST", `/api/applications/${id}/retry`);
+export const markSubmitted = (id: string) => apiSend<ApplicationView>("POST", `/api/applications/${id}/submitted`);
+export const cancelApplication = (id: string) => apiSend<ApplicationView>("POST", `/api/applications/${id}/cancel`);
+export const focusApplication = (id: string) => apiSend<void>("POST", `/api/applications/${id}/focus`);
+export const openInAgentBrowser = (url: string) => apiSend<void>("POST", "/api/browser/open", { url });
+export const runEventsUrl = (id: string, after: number) =>
+  `${API_URL}/api/applications/${id}/events?after=${after}`;

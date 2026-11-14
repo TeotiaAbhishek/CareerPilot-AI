@@ -23,7 +23,7 @@ use sqlx::PgPool;
 use tokio::sync::Notify;
 
 use crate::{
-    llm::ollama::{OllamaClient, OllamaError},
+    llm::{LlmClient, LlmError},
     profile, settings,
 };
 use prompt::{JobForPrompt, PROMPT_VERSION, SYSTEM_PROMPT, output_schema, user_prompt};
@@ -41,7 +41,7 @@ pub struct Scorer {
 
 struct Inner {
     db: PgPool,
-    ollama: OllamaClient,
+    llm: LlmClient,
     wake: Notify,
     state: Mutex<WorkerState>,
 }
@@ -100,19 +100,19 @@ enum Failure {
 }
 
 impl Scorer {
-    pub fn new(db: PgPool, ollama: OllamaClient) -> Self {
+    pub fn new(db: PgPool, llm: LlmClient) -> Self {
         Self {
             inner: Arc::new(Inner {
                 db,
-                ollama,
+                llm,
                 wake: Notify::new(),
                 state: Mutex::new(WorkerState::default()),
             }),
         }
     }
 
-    pub fn ollama(&self) -> &OllamaClient {
-        &self.inner.ollama
+    pub fn llm(&self) -> &LlmClient {
+        &self.inner.llm
     }
 
     pub fn state(&self) -> WorkerState {
@@ -245,12 +245,12 @@ impl Scorer {
         let started = Instant::now();
         let value = self
             .inner
-            .ollama
+            .llm
             .chat_json(model, SYSTEM_PROMPT, &user, &output_schema())
             .await
             .map_err(|e| match e {
                 e if e.is_unavailable() => Failure::Paused(e.to_string()),
-                OllamaError::BadAnswer(m) => Failure::Job(m),
+                LlmError::BadAnswer(m) => Failure::Job(m),
                 e => Failure::Job(e.to_string()),
             })?;
         let duration_ms = started.elapsed().as_millis() as i32;

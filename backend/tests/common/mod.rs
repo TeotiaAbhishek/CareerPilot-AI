@@ -2,9 +2,11 @@
 #![allow(dead_code)]
 
 use careerpilot_api::{
-    AppState, ScheduleInfo, build_app,
+    AppState, ScheduleInfo,
+    apply::{browser::BrowserClient, runner::Applier},
+    build_app,
     documents::worker::Drafter,
-    llm::ollama::OllamaClient,
+    llm::{LlmClient, OllamaClient},
     scoring::Scorer,
     scraper::seek::{Politeness, SeekClient},
     vault::crypto::VaultKey,
@@ -20,24 +22,37 @@ pub const NOWHERE: &str = "http://127.0.0.1:9";
 /// Start the real app on a random port and return its base URL.
 /// `seek_base_url` points the scraper at a fake SEEK in tests.
 pub async fn spawn_app(db: PgPool, seek_base_url: &str) -> String {
-    spawn_full(db, seek_base_url, NOWHERE, true).await.0
+    spawn_full(db, seek_base_url, NOWHERE, NOWHERE, true)
+        .await
+        .0
 }
 
 /// Like `spawn_scoring_app`, but returns the drafting worker (also not started).
 pub async fn spawn_drafting_app(db: PgPool, ollama_url: &str) -> (String, Drafter) {
-    let (url, _, drafter) = spawn_full(db, NOWHERE, ollama_url, true).await;
+    let (url, _, drafter, _) = spawn_full(db, NOWHERE, ollama_url, NOWHERE, true).await;
     (url, drafter)
+}
+
+/// The app with the apply runner pointed at a fake browser worker and a fake
+/// Ollama. The runner is not started: tests call `applier.run_next()`.
+pub async fn spawn_apply_app(
+    db: PgPool,
+    ollama_url: &str,
+    worker_url: &str,
+) -> (String, Applier, Drafter) {
+    let (url, _, drafter, applier) = spawn_full(db, NOWHERE, ollama_url, worker_url, true).await;
+    (url, applier, drafter)
 }
 
 /// The app with no VAULT_KEY, so the vault is locked.
 pub async fn spawn_locked_vault_app(db: PgPool) -> String {
-    spawn_full(db, NOWHERE, NOWHERE, false).await.0
+    spawn_full(db, NOWHERE, NOWHERE, NOWHERE, false).await.0
 }
 
 /// Like `spawn_app`, but scoring talks to `ollama_url` (a fake Ollama in tests).
 /// The worker is not started: tests call `scorer.process_next()` themselves.
 pub async fn spawn_scoring_app(db: PgPool, ollama_url: &str) -> (String, Scorer) {
-    let (url, scorer, _) = spawn_full(db, NOWHERE, ollama_url, true).await;
+    let (url, scorer, _, _) = spawn_full(db, NOWHERE, ollama_url, NOWHERE, true).await;
     (url, scorer)
 }
 
@@ -45,8 +60,9 @@ async fn spawn_full(
     db: PgPool,
     seek_base_url: &str,
     ollama_url: &str,
+    worker_url: &str,
     unlocked: bool,
-) -> (String, Scorer, Drafter) {
+) -> (String, Scorer, Drafter, Applier) {
     // Scoring needs a resume and a location.
     sqlx::query("UPDATE profile_facts SET city = 'Sydney', state = 'NSW'")
         .execute(&db)
@@ -59,9 +75,15 @@ async fn spawn_full(
     .await
     .unwrap();
 
-    let ollama = OllamaClient::new(ollama_url, 8192).unwrap();
-    let scorer = Scorer::new(db.clone(), ollama.clone());
-    let drafter = Drafter::new(db.clone(), ollama);
+    let llm = LlmClient::from(OllamaClient::new(ollama_url, 8192).unwrap());
+    let scorer = Scorer::new(db.clone(), llm.clone());
+    let drafter = Drafter::new(db.clone(), llm.clone());
+    let applier = Applier::new(
+        db.clone(),
+        llm,
+        BrowserClient::new(worker_url).unwrap(),
+        false,
+    );
     let state = AppState {
         db: db.clone(),
         seek: SeekClient::new(seek_base_url, Politeness::none()).unwrap(),
@@ -71,6 +93,7 @@ async fn spawn_full(
         },
         scorer: scorer.clone(),
         drafter: drafter.clone(),
+        applier: applier.clone(),
         vault: unlocked.then(|| VaultKey::from_base64(TEST_VAULT_KEY).unwrap()),
     };
     let app = build_app(state, "http://localhost:3000");
@@ -78,7 +101,7 @@ async fn spawn_full(
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (format!("http://{addr}"), scorer, drafter)
+    (format!("http://{addr}"), scorer, drafter, applier)
 }
 
 /// Insert a minimal job directly, for tests that don't need the scraper.

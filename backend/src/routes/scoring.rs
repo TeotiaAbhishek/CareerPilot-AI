@@ -48,9 +48,9 @@ pub struct Status {
 
 pub async fn status(State(state): State<AppState>) -> AppResult<Json<Status>> {
     let settings = settings::load(&state.db).await?;
-    let ollama = state.scorer.ollama();
+    let llm = state.scorer.llm();
 
-    let (reachable, models, error) = match ollama.models().await {
+    let (reachable, models, error) = match llm.models().await {
         Ok(models) => (true, models, None),
         Err(error) => (false, Vec::new(), Some(error.to_string())),
     };
@@ -79,7 +79,7 @@ pub async fn status(State(state): State<AppState>) -> AppResult<Json<Status>> {
         prompt_version: PROMPT_VERSION,
         threshold: settings.relevance_threshold,
         ollama: OllamaStatus {
-            url: ollama.base_url().to_string(),
+            url: llm.base_url().to_string(),
             reachable,
             models,
             model_installed,

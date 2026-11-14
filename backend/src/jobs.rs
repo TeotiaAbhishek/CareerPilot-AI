@@ -171,7 +171,8 @@ fn push_filters(
     p: &ListParams,
     settings: &Settings,
 ) -> AppResult<()> {
-    qb.push(" WHERE TRUE");
+    // The practice job (F6) is only for practice runs, never in your lists.
+    qb.push(" WHERE source <> 'practice'");
 
     match p.status.as_deref().unwrap_or("all") {
         "all" => {

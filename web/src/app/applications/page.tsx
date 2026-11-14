@@ -1,7 +1,6 @@
-import { KanbanSquare } from "lucide-react";
 import type { Metadata } from "next";
 
-import { EmptyState } from "@/components/ui/empty-state";
+import { ApplicationsList } from "@/components/applications/applications-list";
 import { PageHeader } from "@/components/ui/page-header";
 
 export const metadata: Metadata = { title: "Applications" };
@@ -9,8 +8,8 @@ export const metadata: Metadata = { title: "Applications" };
 export default function Page() {
   return (
     <>
-      <PageHeader title="Applications" description="Track every application from Apply to offer." />
-      <EmptyState icon={KanbanSquare} title="No applications yet" description="Click Apply on a job and it will show up here with its status." />
+      <PageHeader title="Applications" description="Every apply run, with the ones that need you first." />
+      <ApplicationsList />
     </>
   );
 }

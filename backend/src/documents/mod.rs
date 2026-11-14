@@ -469,7 +469,25 @@ pub async fn download_docx(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
 ) -> AppResult<impl IntoResponse> {
-    let document = load(&state.db, id).await?;
+    let (filename, bytes) = docx_file(&state.db, id).await?;
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
+            .map_err(|e| AppError::Other(e.into()))?,
+    );
+    Ok((headers, bytes))
+}
+
+/// A document as a Word file: (file name, bytes). The apply agent uploads these.
+pub async fn docx_file(db: &PgPool, id: Uuid) -> AppResult<(String, Vec<u8>)> {
+    let document = load(db, id).await?;
     let Some(content) = document.content.clone() else {
         return Err(AppError::Conflict("This draft isn't ready yet.".into()));
     };
@@ -486,21 +504,10 @@ pub async fn download_docx(
             (docx::letter_docx(&draft, &date)?, draft.name)
         }
     };
-    let filename = file_name(&name, document.kind, document.company.as_deref());
-
-    let mut headers = HeaderMap::new();
-    headers.insert(
-        header::CONTENT_TYPE,
-        HeaderValue::from_static(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ),
-    );
-    headers.insert(
-        header::CONTENT_DISPOSITION,
-        HeaderValue::from_str(&format!("attachment; filename=\"{filename}\""))
-            .map_err(|e| AppError::Other(e.into()))?,
-    );
-    Ok((headers, bytes))
+    Ok((
+        file_name(&name, document.kind, document.company.as_deref()),
+        bytes,
+    ))
 }
 
 /// "Jane Citizen - Resume - Acme Bank.docx", ASCII only so every browser and OS accepts it.

@@ -1,11 +1,13 @@
 use anyhow::Result;
 use careerpilot_api::{
-    AppState, ScheduleInfo, build_app,
+    AppState, ScheduleInfo,
+    apply::{browser::BrowserClient, runner::Applier},
+    build_app,
     config::Config,
     db,
     documents::worker::Drafter,
     import,
-    llm::ollama::OllamaClient,
+    llm::{LlmClient, OllamaClient},
     profile,
     scoring::Scorer,
     scraper::{
@@ -91,19 +93,34 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         }
     };
 
-    let ollama = OllamaClient::new(&config.ollama_url, config.ollama_num_ctx)?;
-    let scorer = Scorer::new(db.clone(), ollama.clone());
+    // The one place that picks the model provider. Switching to OpenAI or
+    // Claude later means building a different LlmClient here.
+    let llm = LlmClient::from(OllamaClient::new(
+        &config.ollama_url,
+        config.ollama_num_ctx,
+    )?);
+    let scorer = Scorer::new(db.clone(), llm.clone());
     scorer.spawn();
     tracing::info!(ollama = %config.ollama_url, "scoring worker started");
 
-    // Shares the Ollama client with scoring, so they take turns on the GPU.
-    let drafter = Drafter::new(db.clone(), ollama);
+    // Shares the model client with scoring, so they take turns on the GPU.
+    let drafter = Drafter::new(db.clone(), llm.clone());
     let requeued = drafter.requeue_interrupted().await?;
     if requeued > 0 {
         tracing::warn!(requeued, "re-queued drafts interrupted by a restart");
     }
     drafter.spawn();
     tracing::info!("drafting worker started");
+
+    // The apply runner uses the same model client (and GPU turns) too.
+    let browser = BrowserClient::new(&config.browser_worker_url)?;
+    let applier = Applier::new(db.clone(), llm, browser, true);
+    let requeued = applier.requeue_interrupted().await?;
+    if requeued > 0 {
+        tracing::warn!(requeued, "re-queued applications interrupted by a restart");
+    }
+    applier.spawn();
+    tracing::info!(worker = %config.browser_worker_url, "apply runner started");
 
     let state = AppState {
         db,
@@ -114,6 +131,7 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         },
         scorer,
         drafter,
+        applier,
         vault,
     };
     let app = build_app(state, &config.web_origin);
