@@ -107,7 +107,7 @@ export function JobsView() {
 
       <JobFiltersBar filters={filters} workTypes={workTypes.data ?? []} onChange={changeFilters} />
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
         <section aria-label="Job list">
           {list.error ? (
             <EmptyState icon={SearchX} title="Couldn't load jobs" description={list.error} />

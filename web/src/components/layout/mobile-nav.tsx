@@ -2,6 +2,7 @@
 
 import { Menu, X } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 
@@ -30,24 +31,30 @@ export function MobileNav() {
         <Menu />
       </Button>
 
-      {open ? (
-        <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Menu">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setOpen(false)} />
-          <div className="absolute inset-y-0 left-0 flex w-72 flex-col border-r bg-sidebar px-3 py-5 shadow-xl">
-            <div className="flex items-center justify-between">
-              <Brand />
-              <Button variant="ghost" size="icon" aria-label="Close menu" onClick={() => setOpen(false)}>
-                <X />
-              </Button>
-            </div>
-            <div className="mt-8">
-              <Suspense fallback={<NavLinksFallback />}>
-                <NavLinks onNavigate={() => setOpen(false)} />
-              </Suspense>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      {/* Portal to <body>: the topbar uses backdrop-blur, and a backdrop-filter
+          turns it into the containing block for `fixed` children, which squeezed
+          the drawer into the 56px header and let the page show through. */}
+      {open
+        ? createPortal(
+            <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="Menu">
+              <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setOpen(false)} />
+              <div className="absolute inset-y-0 left-0 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r bg-sidebar px-3 py-5 shadow-xl">
+                <div className="flex items-center justify-between">
+                  <Brand />
+                  <Button variant="ghost" size="icon" aria-label="Close menu" onClick={() => setOpen(false)}>
+                    <X />
+                  </Button>
+                </div>
+                <div className="mt-8">
+                  <Suspense fallback={<NavLinksFallback />}>
+                    <NavLinks onNavigate={() => setOpen(false)} />
+                  </Suspense>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
