@@ -5,13 +5,14 @@
  */
 
 export type JobStatus = "all" | "new" | "saved" | "hidden";
-export type JobSort = "newest" | "oldest" | "relevance";
+export type JobSort = "newest" | "oldest" | "relevance" | "best_fit";
 
 export type JobFilters = {
   q: string;
   status: JobStatus;
   workType: string;
   postedWithinDays: number | null;
+  relevantOnly: boolean;
   sort: JobSort;
   page: number;
 };
@@ -21,6 +22,8 @@ export const DEFAULT_FILTERS: JobFilters = {
   status: "all",
   workType: "",
   postedWithinDays: null,
+  // The Jobs page opens on relevant jobs only; ?relevant=0 shows everything.
+  relevantOnly: true,
   sort: "newest",
   page: 1,
 };
@@ -28,7 +31,7 @@ export const DEFAULT_FILTERS: JobFilters = {
 export const PAGE_SIZE = 25;
 
 const STATUSES: JobStatus[] = ["all", "new", "saved", "hidden"];
-const SORTS: JobSort[] = ["newest", "oldest", "relevance"];
+const SORTS: JobSort[] = ["newest", "oldest", "relevance", "best_fit"];
 
 type ParamsLike = { get(name: string): string | null };
 
@@ -43,6 +46,7 @@ export function parseFilters(params: ParamsLike): JobFilters {
     status: status && STATUSES.includes(status) ? status : "all",
     workType: params.get("work_type") ?? "",
     postedWithinDays: Number.isInteger(days) && days > 0 ? days : null,
+    relevantOnly: params.get("relevant") !== "0",
     sort: sort && SORTS.includes(sort) ? sort : "newest",
     page: Number.isInteger(page) && page > 1 ? page : 1,
   };
@@ -55,6 +59,7 @@ export function filtersToSearchParams(filters: JobFilters, selectedJob?: string 
   if (filters.status !== "all") params.set("status", filters.status);
   if (filters.workType) params.set("work_type", filters.workType);
   if (filters.postedWithinDays) params.set("posted", String(filters.postedWithinDays));
+  if (!filters.relevantOnly) params.set("relevant", "0");
   if (filters.sort !== "newest") params.set("sort", filters.sort);
   if (filters.page > 1) params.set("page", String(filters.page));
   if (selectedJob) params.set("job", selectedJob);
@@ -72,5 +77,6 @@ export function filtersToApiPath(filters: JobFilters): string {
   if (filters.q.trim()) params.set("q", filters.q.trim());
   if (filters.workType) params.set("work_type", filters.workType);
   if (filters.postedWithinDays) params.set("posted_within_days", String(filters.postedWithinDays));
+  if (filters.relevantOnly) params.set("relevant_only", "true");
   return `/api/jobs?${params.toString()}`;
 }

@@ -3,9 +3,12 @@ pub mod db;
 pub mod error;
 pub mod import;
 pub mod jobs;
+pub mod llm;
 pub mod routes;
+pub mod scoring;
 pub mod scraper;
 pub mod searches;
+pub mod settings;
 
 use std::time::Duration;
 
@@ -23,6 +26,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use scoring::Scorer;
 use scraper::seek::SeekClient;
 
 /// The daily scrape settings, shown in the UI.
@@ -38,6 +42,7 @@ pub struct AppState {
     pub db: PgPool,
     pub seek: SeekClient,
     pub schedule: ScheduleInfo,
+    pub scorer: Scorer,
 }
 
 /// Build the whole HTTP app. Kept separate from `main` so tests can build it too.
@@ -69,7 +74,13 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
             put(searches::update).delete(searches::delete),
         )
         .route("/scrape", post(routes::scrape::start))
-        .route("/scrape/status", get(routes::scrape::status));
+        .route("/scrape/status", get(routes::scrape::status))
+        .route("/jobs/{id}/label", put(routes::scoring::set_label))
+        .route("/jobs/{id}/rescore", post(routes::scoring::rescore))
+        .route("/scoring/status", get(routes::scoring::status))
+        .route("/settings", get(settings::get).put(settings::update))
+        .route("/evals", get(routes::evals::report))
+        .route("/evals/run", post(routes::evals::run));
 
     Router::new()
         .nest("/api", api)

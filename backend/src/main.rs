@@ -3,6 +3,8 @@ use careerpilot_api::{
     AppState, ScheduleInfo, build_app,
     config::Config,
     db, import,
+    llm::ollama::OllamaClient,
+    scoring::Scorer,
     scraper::{
         self,
         seek::{Politeness, SeekClient},
@@ -63,6 +65,20 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         tracing::info!("daily scrape is off (SCRAPE_DAILY_AT=off)");
     }
 
+    let ollama = OllamaClient::new(&config.ollama_url, config.ollama_num_ctx)?;
+    let scorer = Scorer::new(
+        db.clone(),
+        ollama,
+        config.resume_path.clone(),
+        config.profile_path.clone(),
+    );
+    scorer.spawn();
+    tracing::info!(
+        ollama = %config.ollama_url,
+        resume = %config.resume_path.display(),
+        "scoring worker started"
+    );
+
     let state = AppState {
         db,
         seek,
@@ -70,6 +86,7 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
             daily_at: config.scrape_daily_at,
             timezone: config.scrape_timezone,
         },
+        scorer,
     };
     let app = build_app(state, &config.web_origin);
 

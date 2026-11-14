@@ -1,13 +1,13 @@
 "use client";
 
-import { Briefcase, MousePointerClick, SearchX } from "lucide-react";
+import { Briefcase, MousePointerClick, SearchX, Sparkles } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo } from "react";
 
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { useApi } from "@/hooks/use-api";
-import type { Facet, JobDetail, JobPage } from "@/lib/api";
+import { type Facet, type JobDetail, type JobPage, summaryPatch } from "@/lib/api";
 import {
   DEFAULT_FILTERS,
   type JobFilters,
@@ -71,7 +71,7 @@ export function JobsView() {
     (updated: JobDetail) =>
       mutate((page) => ({
         ...page,
-        items: page.items.map((j) => (j.id === updated.id ? { ...j, ...updated } : j)),
+        items: page.items.map((j) => (j.id === updated.id ? { ...j, ...summaryPatch(updated) } : j)),
       })),
     [mutate],
   );
@@ -81,6 +81,7 @@ export function JobsView() {
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement;
       if (target.closest("input, select, textarea") || jobs.length === 0) return;
+
       const step = event.key === "ArrowDown" || event.key === "j" ? 1 : event.key === "ArrowUp" || event.key === "k" ? -1 : 0;
       if (step === 0) return;
       event.preventDefault();
@@ -113,7 +114,13 @@ export function JobsView() {
           ) : !list.data ? (
             <JobListSkeleton />
           ) : jobs.length === 0 ? (
-            filtered ? (
+            filters.relevantOnly && list.data.total === 0 && !filtered ? (
+              <EmptyState
+                icon={Sparkles}
+                title="No relevant jobs yet"
+                description="Jobs show up here once your local model scores them at or above your threshold. Switch off “Relevant only” to see every job."
+              />
+            ) : filtered ? (
               <EmptyState
                 icon={SearchX}
                 title="No jobs match"
@@ -142,12 +149,12 @@ export function JobsView() {
         <section aria-label="Job details" className="hidden lg:block">
           <div className="sticky top-20">
             {selectedId ? (
-              <JobDetailView id={selectedId} onChange={handleJobChange} />
+              <JobDetailView id={selectedId} onChange={handleJobChange} shortcuts />
             ) : (
               <EmptyState
                 icon={MousePointerClick}
                 title="Pick a job"
-                description="Select a job on the left to read it here. Tip: use ↑ and ↓ to move through the list."
+                description="Select a job on the left to read it here. Tips: ↑ and ↓ move through the list; a, m and n label it Apply, Maybe or No."
               />
             )}
           </div>

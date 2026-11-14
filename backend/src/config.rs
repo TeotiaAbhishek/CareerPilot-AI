@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use chrono::NaiveTime;
@@ -14,6 +14,12 @@ pub struct Config {
     pub scrape_daily_at: Option<NaiveTime>,
     pub scrape_timezone: Tz,
     pub seek_base_url: String,
+    pub ollama_url: String,
+    /// The model's context window in tokens. Resume + profile + job is ~4-6k.
+    pub ollama_num_ctx: u32,
+    /// Your resume and profile, the same files v1 uses.
+    pub resume_path: PathBuf,
+    pub profile_path: PathBuf,
 }
 
 impl Config {
@@ -41,6 +47,19 @@ impl Config {
             .trim_end_matches('/')
             .to_string();
 
+        let ollama_url =
+            std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://localhost:11434".into());
+        let ollama_num_ctx = std::env::var("OLLAMA_NUM_CTX")
+            .unwrap_or_else(|_| "8192".into())
+            .parse()
+            .context("OLLAMA_NUM_CTX must be a number like 8192")?;
+        let resume_path = std::env::var("RESUME_PATH")
+            .unwrap_or_else(|_| "../data/master_resume.md".into())
+            .into();
+        let profile_path = std::env::var("PROFILE_PATH")
+            .unwrap_or_else(|_| "../config/candidate_profile.yaml".into())
+            .into();
+
         Ok(Self {
             database_url,
             bind_addr,
@@ -48,6 +67,10 @@ impl Config {
             scrape_daily_at,
             scrape_timezone,
             seek_base_url,
+            ollama_url,
+            ollama_num_ctx,
+            resume_path,
+            profile_path,
         })
     }
 }

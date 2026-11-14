@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import type { Facet } from "@/lib/api";
 import type { JobFilters, JobStatus } from "@/lib/jobs-query";
 import { cn } from "@/lib/utils";
@@ -136,10 +137,20 @@ export function JobFiltersBar({
         >
           <option value="newest">Newest first</option>
           <option value="oldest">Oldest first</option>
+          <option value="best_fit">Best fit</option>
           <option value="relevance" disabled={!filters.q}>
-            Best match
+            Best text match
           </option>
         </Select>
+
+        <label className="flex items-center gap-2 text-sm">
+          <Switch
+            label="Relevant only"
+            checked={filters.relevantOnly}
+            onCheckedChange={(relevantOnly) => onChange({ relevantOnly, page: 1 })}
+          />
+          Relevant only
+        </label>
       </div>
     </div>
   );

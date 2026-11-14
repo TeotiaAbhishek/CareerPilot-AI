@@ -16,7 +16,12 @@ export function StatsRow() {
       <StatCard label="New jobs" value={data?.jobs_new_24h ?? null} hint="Found in the last 24 h" icon={Briefcase} />
       <StatCard label="Unread" value={data?.jobs_unviewed ?? null} hint="Not opened yet" icon={Inbox} />
       <StatCard label="Saved" value={data?.jobs_saved ?? null} hint="Bookmarked to look at" icon={Bookmark} />
-      <StatCard label="Relevant" value={null} hint="Scored 60+ (arrives in F3)" icon={Sparkles} />
+      <StatCard
+        label="Relevant"
+        value={data?.jobs_relevant ?? null}
+        hint={data ? `Of ${data.jobs_scored} scored by your local model` : "Scored by your local model"}
+        icon={Sparkles}
+      />
     </section>
   );
 }

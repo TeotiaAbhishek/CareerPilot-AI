@@ -1,6 +1,7 @@
 import {
   Briefcase,
   FileText,
+  FlaskConical,
   KanbanSquare,
   LayoutDashboard,
   Settings,
@@ -18,6 +19,7 @@ export type NavItem = {
 export const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/jobs", label: "Jobs", icon: Briefcase },
+  { href: "/evals", label: "Evals", icon: FlaskConical },
   { href: "/applications", label: "Applications", icon: KanbanSquare },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/profile", label: "Profile", icon: UserRound },
