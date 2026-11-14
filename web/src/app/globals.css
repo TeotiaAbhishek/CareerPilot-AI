@@ -97,3 +97,15 @@
     @apply outline-2 outline-offset-2 outline-ring;
   }
 }
+
+/* The print view of a tailored document (F5): the sheet's own padding is the page margin. */
+@media print {
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  body {
+    background: white;
+  }
+}

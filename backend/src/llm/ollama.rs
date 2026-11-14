@@ -1,7 +1,7 @@
 //! A small client for a local Ollama server (https://ollama.com).
 //! Only the two endpoints we need: `/api/chat` and `/api/tags`.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -11,6 +11,18 @@ pub struct OllamaClient {
     http: reqwest::Client,
     base_url: String,
     num_ctx: u32,
+    /// One model call at a time. The scoring and drafting workers share this
+    /// client, so they take turns on the GPU instead of fighting over it.
+    gpu: Arc<tokio::sync::Mutex<()>>,
+}
+
+/// Per-call options for `chat_json_with`.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ChatOptions {
+    /// Let the model reason before answering (Qwen3 "thinking"). Slower, better for writing.
+    pub think: bool,
+    /// Context window for this call. None uses OLLAMA_NUM_CTX.
+    pub num_ctx: Option<u32>,
 }
 
 /// Why a call failed. The scoring worker treats these differently:
@@ -67,6 +79,7 @@ impl OllamaClient {
             http,
             base_url: base_url.trim_end_matches('/').to_string(),
             num_ctx,
+            gpu: Arc::new(tokio::sync::Mutex::new(())),
         })
     }
 
@@ -83,6 +96,19 @@ impl OllamaClient {
         user: &str,
         schema: &Value,
     ) -> Result<Value, OllamaError> {
+        self.chat_json_with(model, system, user, schema, ChatOptions::default())
+            .await
+    }
+
+    /// `chat_json` with options (thinking, a bigger context window).
+    pub async fn chat_json_with(
+        &self,
+        model: &str,
+        system: &str,
+        user: &str,
+        schema: &Value,
+        options: ChatOptions,
+    ) -> Result<Value, OllamaError> {
         let body = json!({
             "model": model,
             "messages": [
@@ -91,11 +117,16 @@ impl OllamaClient {
             ],
             "stream": false,
             "format": schema,
-            // Qwen3 "thinks" out loud by default. We only want the JSON.
-            "think": false,
-            "options": { "temperature": 0, "num_ctx": self.num_ctx }
+            // Qwen3 "thinks" by default. The thinking comes back separately
+            // from the answer, so the answer is still only the JSON.
+            "think": options.think,
+            "options": {
+                "temperature": 0,
+                "num_ctx": options.num_ctx.unwrap_or(self.num_ctx)
+            }
         });
 
+        let _turn = self.gpu.lock().await;
         let response = self
             .http
             .post(format!("{}/api/chat", self.base_url))

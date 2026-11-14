@@ -31,6 +31,8 @@ import {
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import { PreparePanel } from "@/components/documents/prepare-panel";
+
 import { ScoreBadge } from "./score-badge";
 import { ScorePanel } from "./score-panel";
 
@@ -228,6 +230,8 @@ export function JobDetailView({
       </header>
 
       <ScorePanel job={current} onLabel={label} onRescore={rescore} />
+
+      <PreparePanel jobId={current.id} canDraft={!!current.description_text} />
 
       {current.scrape_status === "failed" ? (
         <div className="m-6 mb-0 flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">

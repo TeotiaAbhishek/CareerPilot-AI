@@ -1,6 +1,7 @@
 pub mod answers;
 pub mod config;
 pub mod db;
+pub mod documents;
 pub mod error;
 pub mod import;
 pub mod jobs;
@@ -29,6 +30,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use documents::worker::Drafter;
 use scoring::Scorer;
 use scraper::seek::SeekClient;
 use vault::crypto::VaultKey;
@@ -47,6 +49,7 @@ pub struct AppState {
     pub seek: SeekClient,
     pub schedule: ScheduleInfo,
     pub scorer: Scorer,
+    pub drafter: Drafter,
     /// None when VAULT_KEY isn't set: the vault endpoints then say it's locked.
     pub vault: Option<VaultKey>,
 }
@@ -108,7 +111,16 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/vault/status", get(vault::status))
         .route("/vault/generate", get(vault::generate))
         .route("/vault/{id}", put(vault::update).delete(vault::delete))
-        .route("/vault/{id}/reveal", post(vault::reveal));
+        .route("/vault/{id}/reveal", post(vault::reveal))
+        .route(
+            "/jobs/{id}/documents",
+            get(documents::job_documents).post(documents::prepare),
+        )
+        .route("/documents", get(documents::list))
+        .route("/documents/status", get(documents::status))
+        .route("/documents/{id}", get(documents::get).put(documents::save))
+        .route("/documents/{id}/approve", post(documents::approve))
+        .route("/documents/{id}/docx", get(documents::download_docx));
 
     Router::new()
         .nest("/api", api)

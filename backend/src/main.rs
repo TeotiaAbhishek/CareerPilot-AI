@@ -2,7 +2,9 @@ use anyhow::Result;
 use careerpilot_api::{
     AppState, ScheduleInfo, build_app,
     config::Config,
-    db, import,
+    db,
+    documents::worker::Drafter,
+    import,
     llm::ollama::OllamaClient,
     profile,
     scoring::Scorer,
@@ -90,9 +92,18 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
     };
 
     let ollama = OllamaClient::new(&config.ollama_url, config.ollama_num_ctx)?;
-    let scorer = Scorer::new(db.clone(), ollama);
+    let scorer = Scorer::new(db.clone(), ollama.clone());
     scorer.spawn();
     tracing::info!(ollama = %config.ollama_url, "scoring worker started");
+
+    // Shares the Ollama client with scoring, so they take turns on the GPU.
+    let drafter = Drafter::new(db.clone(), ollama);
+    let requeued = drafter.requeue_interrupted().await?;
+    if requeued > 0 {
+        tracing::warn!(requeued, "re-queued drafts interrupted by a restart");
+    }
+    drafter.spawn();
+    tracing::info!("drafting worker started");
 
     let state = AppState {
         db,
@@ -102,6 +113,7 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
             timezone: config.scrape_timezone,
         },
         scorer,
+        drafter,
         vault,
     };
     let app = build_app(state, &config.web_origin);

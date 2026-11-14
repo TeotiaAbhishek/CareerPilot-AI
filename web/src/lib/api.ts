@@ -163,12 +163,12 @@ export type Settings = {
   scoring_enabled: boolean;
   scoring_model: string;
   relevance_threshold: number;
+  drafting_model: string;
+  drafting_think: boolean;
   updated_at: string;
 };
 
-export type SettingsPatch = Partial<
-  Pick<Settings, "scoring_enabled" | "scoring_model" | "relevance_threshold">
->;
+export type SettingsPatch = Partial<Omit<Settings, "updated_at">>;
 
 export type ScoringStatus = {
   enabled: boolean;
@@ -340,6 +340,103 @@ export type VaultStatus = {
   recent_access: { site: string; action: string; at: string }[];
 };
 
+// ---------- Tailored documents (F5) ----------
+
+export type DocumentKind = "resume" | "cover_letter";
+export type DocumentStatus = "queued" | "drafting" | "ready" | "approved" | "failed";
+
+/** One sentence, bullet or paragraph, and the evidence ids it relies on. */
+export type DraftLine = { text: string; evidence: string[] };
+export type SkillGroup = { group: string; items: string[] };
+export type DraftEntry = { id: string; heading: string; details: string[]; bullets: DraftLine[] };
+export type OtherSection = { heading: string; lines: [string, string][] };
+
+export type ResumeDraft = {
+  name: string;
+  contact: string[];
+  summary: DraftLine;
+  skills: SkillGroup[];
+  experience: DraftEntry[];
+  projects: DraftEntry[];
+  education: DraftEntry[];
+  other: OtherSection[];
+};
+
+export type LetterDraft = {
+  name: string;
+  contact: string[];
+  greeting: string;
+  paragraphs: DraftLine[];
+  closing: string;
+};
+
+export type Flag = {
+  key: string;
+  /** "summary", "experience.W1.0", "projects.P1.2", "paragraphs.1" or "document". */
+  path: string;
+  severity: "error" | "info";
+  message: string;
+};
+
+export type Evidence = { id: string; text: string };
+
+type DocumentBase = {
+  id: string;
+  job_id: string;
+  status: DocumentStatus;
+  note: string | null;
+  model: string | null;
+  prompt_version: string | null;
+  flags: Flag[];
+  dismissed_flags: string[];
+  edited: boolean;
+  error: string | null;
+  duration_ms: number | null;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+  job_title: string;
+  company: string | null;
+  open_errors: number;
+  evidence: Evidence[];
+  previous_drafts: number;
+};
+
+export type ResumeDocument = DocumentBase & { kind: "resume"; content: ResumeDraft | null };
+export type LetterDocument = DocumentBase & { kind: "cover_letter"; content: LetterDraft | null };
+export type DocumentView = ResumeDocument | LetterDocument;
+
+export type JobDocuments = {
+  resume: ResumeDocument | null;
+  cover_letter: LetterDocument | null;
+  queue_ahead: number;
+};
+
+export type DocumentSummary = {
+  id: string;
+  job_id: string;
+  job_title: string;
+  company: string | null;
+  kind: DocumentKind;
+  status: DocumentStatus;
+  open_errors: number;
+  created_at: string;
+  updated_at: string;
+  approved_at: string | null;
+};
+
+export type DrafterStatus = {
+  model: string;
+  think: boolean;
+  queued: number;
+  worker: {
+    current: { document_id: string; job_id: string; kind: DocumentKind; started_at: string } | null;
+    paused_reason: string | null;
+  };
+};
+
+export type PrepareInput = { resume?: boolean; cover_letter?: boolean; note?: string };
+
 // ---------- Endpoints ----------
 
 export const getHealth = (init?: RequestInit) => apiGet<Health>("/api/health", init);
@@ -374,3 +471,10 @@ export const revealPassword = (id: string) =>
   apiSend<{ password: string }>("POST", `/api/vault/${id}/reveal`);
 export const generatePassword = (length = 20) =>
   apiGet<{ password: string }>(`/api/vault/generate?length=${length}`, { cache: "no-store" });
+export const prepareDocuments = (jobId: string, input: PrepareInput) =>
+  apiSend<JobDocuments>("POST", `/api/jobs/${encodeURIComponent(jobId)}/documents`, input);
+export const saveDocument = (id: string, content: ResumeDraft | LetterDraft, dismissedFlags: string[]) =>
+  apiSend<DocumentView>("PUT", `/api/documents/${id}`, { content, dismissed_flags: dismissedFlags });
+export const approveDocument = (id: string) => apiSend<DocumentView>("POST", `/api/documents/${id}/approve`);
+/** A plain link downloads the Word file (the API sets the file name). */
+export const docxUrl = (id: string) => `${API_URL}/api/documents/${id}/docx`;

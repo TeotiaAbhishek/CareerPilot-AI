@@ -6,7 +6,7 @@ import { NavLinks, NavLinksFallback } from "./nav-links";
 /** Fixed sidebar on desktop (lg and up). On mobile the same links live in MobileNav. */
 export function Sidebar() {
   return (
-    <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r bg-sidebar px-3 py-5 lg:flex">
+    <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r bg-sidebar px-3 py-5 lg:flex print:hidden">
       <Brand />
       <div className="mt-8 flex-1">
         <Suspense fallback={<NavLinksFallback />}>
