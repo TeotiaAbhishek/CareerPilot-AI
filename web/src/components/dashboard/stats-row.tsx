@@ -7,20 +7,39 @@ import type { Stats } from "@/lib/api";
 
 import { StatCard } from "./stat-card";
 
-/** The four numbers at the top of the dashboard. */
+/** The four numbers at the top of the dashboard. Each card opens the matching jobs. */
 export function StatsRow() {
   const { data } = useApi<Stats>("/api/stats");
 
   return (
     <section aria-label="Stats" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatCard label="New jobs" value={data?.jobs_new_24h ?? null} hint="Found in the last 24 h" icon={Briefcase} />
-      <StatCard label="Unread" value={data?.jobs_unviewed ?? null} hint="Not opened yet" icon={Inbox} />
-      <StatCard label="Saved" value={data?.jobs_saved ?? null} hint="Bookmarked to look at" icon={Bookmark} />
+      <StatCard
+        label="New jobs"
+        value={data?.jobs_new_24h ?? null}
+        hint="Found in the last 24 h"
+        icon={Briefcase}
+        href="/jobs?posted=1&relevant=0"
+      />
+      <StatCard
+        label="Unread"
+        value={data?.jobs_unviewed ?? null}
+        hint="Not opened yet"
+        icon={Inbox}
+        href="/jobs?status=new&relevant=0"
+      />
+      <StatCard
+        label="Saved"
+        value={data?.jobs_saved ?? null}
+        hint="Bookmarked to look at"
+        icon={Bookmark}
+        href="/jobs?status=saved&relevant=0"
+      />
       <StatCard
         label="Relevant"
         value={data?.jobs_relevant ?? null}
         hint={data ? `Of ${data.jobs_scored} scored by your local model` : "Scored by your local model"}
         icon={Sparkles}
+        href="/jobs?sort=best_fit"
       />
     </section>
   );

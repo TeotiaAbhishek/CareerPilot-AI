@@ -7,11 +7,12 @@ const FEATURES = [
   { name: "Foundation and design system", done: true },
   { name: "Jobs: SEEK scraper, list and detail", done: true },
   { name: "Relevance scoring with Ollama", done: true },
-  { name: "Profile, facts and password vault", done: false },
+  { name: "Profile, facts and password vault", done: true },
   { name: "Tailored documents on Apply", done: false },
   { name: "Browser apply agents", done: false },
   { name: "One-click Apply and tracker", done: false },
   { name: "Email drafts and follow-ups", done: false },
+  { name: "Suggestions assistant", done: false },
 ];
 
 /** Build progress. Tick a feature here when it ships. */

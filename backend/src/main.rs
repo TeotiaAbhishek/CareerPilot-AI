@@ -4,11 +4,13 @@ use careerpilot_api::{
     config::Config,
     db, import,
     llm::ollama::OllamaClient,
+    profile,
     scoring::Scorer,
     scraper::{
         self,
         seek::{Politeness, SeekClient},
     },
+    vault::crypto::VaultKey,
 };
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -26,6 +28,8 @@ enum Command {
     Serve,
     /// Copy jobs, analyses and applications from v1's Supabase database.
     ImportSupabase,
+    /// Create a key for the password vault and save it in backend/.env.
+    VaultInit,
 }
 
 #[tokio::main]
@@ -42,12 +46,16 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    if matches!(cli.command, Some(Command::VaultInit)) {
+        return vault_init();
+    }
     let config = Config::from_env()?;
     let db = db::connect_and_migrate(&config.database_url).await?;
 
     match cli.command.unwrap_or(Command::Serve) {
         Command::ImportSupabase => import::run(&db).await,
         Command::Serve => serve(config, db).await,
+        Command::VaultInit => unreachable!("handled above"),
     }
 }
 
@@ -65,19 +73,26 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         tracing::info!("daily scrape is off (SCRAPE_DAILY_AT=off)");
     }
 
+    if profile::import_resume_file(&db, &config.resume_path).await? {
+        tracing::info!(file = %config.resume_path.display(), "imported your resume");
+    }
+
+    let vault = match config.vault_key.as_deref().map(VaultKey::from_base64) {
+        Some(Ok(key)) => {
+            tracing::info!("vault unlocked");
+            Some(key)
+        }
+        Some(Err(error)) => return Err(error.context("VAULT_KEY in backend/.env is invalid")),
+        None => {
+            tracing::warn!("vault locked: run `cargo run -- vault-init` to create a key");
+            None
+        }
+    };
+
     let ollama = OllamaClient::new(&config.ollama_url, config.ollama_num_ctx)?;
-    let scorer = Scorer::new(
-        db.clone(),
-        ollama,
-        config.resume_path.clone(),
-        config.profile_path.clone(),
-    );
+    let scorer = Scorer::new(db.clone(), ollama);
     scorer.spawn();
-    tracing::info!(
-        ollama = %config.ollama_url,
-        resume = %config.resume_path.display(),
-        "scoring worker started"
-    );
+    tracing::info!(ollama = %config.ollama_url, "scoring worker started");
 
     let state = AppState {
         db,
@@ -87,6 +102,7 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
             timezone: config.scrape_timezone,
         },
         scorer,
+        vault,
     };
     let app = build_app(state, &config.web_origin);
 
@@ -97,6 +113,29 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
 
+    Ok(())
+}
+
+/// Create a vault key and append it to backend/.env. Refuses to replace an
+/// existing key: passwords encrypted with it would become unreadable.
+fn vault_init() -> Result<()> {
+    use std::io::Write;
+
+    if std::env::var("VAULT_KEY").is_ok_and(|k| !k.trim().is_empty()) {
+        anyhow::bail!(
+            "VAULT_KEY is already set. Keep it: replacing it makes saved passwords unreadable."
+        );
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(".env")?;
+    writeln!(
+        file,
+        "\n# Password vault key (F4). Back it up somewhere safe. Never commit it."
+    )?;
+    writeln!(file, "VAULT_KEY={}", VaultKey::generate_base64())?;
+    println!("Saved a new VAULT_KEY to backend/.env. Back it up (e.g. in your password manager).");
     Ok(())
 }
 
