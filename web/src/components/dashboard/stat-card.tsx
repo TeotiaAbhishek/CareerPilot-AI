@@ -1,21 +1,27 @@
 import type { LucideIcon } from "lucide-react";
+import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
 
-/** A number with a label. `value` is null until the feature that feeds it exists. */
+/**
+ * A number with a label. `value` is null while loading.
+ * With `href`, the whole card is a link to the matching list.
+ */
 export function StatCard({
   label,
   value,
   hint,
   icon: Icon,
+  href,
 }: {
   label: string;
   value: number | null;
   hint: string;
   icon: LucideIcon;
+  href?: string;
 }) {
-  return (
-    <Card>
+  const card = (
+    <Card className={href ? "h-full transition-colors group-hover:border-primary/40" : undefined}>
       <CardContent className="flex items-start justify-between pt-5">
         <div>
           <p className="text-sm text-muted-foreground">{label}</p>
@@ -27,5 +33,16 @@ export function StatCard({
         </div>
       </CardContent>
     </Card>
+  );
+
+  if (!href) return card;
+  return (
+    <Link
+      href={href}
+      aria-label={`${label}: ${value ?? "loading"}. Open the list.`}
+      className="group block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+    >
+      {card}
+    </Link>
   );
 }

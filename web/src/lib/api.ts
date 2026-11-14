@@ -265,6 +265,81 @@ export type ScrapeStatus = {
 
 export type JobPatch = { saved?: boolean; hidden?: boolean; viewed?: boolean };
 
+export type ResumeVersion = { id: string; content: string; created_at: string };
+
+export type ResumeView = {
+  current: ResumeVersion | null;
+  versions: { id: string; created_at: string; chars: number }[];
+};
+
+export type Facts = {
+  full_name: string;
+  email: string;
+  phone: string;
+  linkedin_url: string;
+  website_url: string;
+  street_address: string;
+  postcode: string;
+  city: string;
+  state: string;
+  country: string;
+  willing_to_relocate: boolean;
+  australian_citizen: boolean;
+  australian_permanent_resident: boolean;
+  new_zealand_citizen: boolean;
+  australian_work_rights: boolean;
+  visa_type: string;
+  /** "YYYY-MM-DD" */
+  work_rights_expiry: string | null;
+  notice_period: string;
+  salary_expectation: string;
+  available_from: string | null;
+};
+
+export type FactsView = Facts & { updated_at: string };
+
+export type Answer = {
+  id: string;
+  question: string;
+  answer: string;
+  tags: string[];
+  source: "you" | "agent";
+  times_used: number;
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type AnswerInput = Pick<Answer, "question" | "answer" | "tags">;
+
+/** A vault entry. The password is never part of it: use `revealPassword`. */
+export type Credential = {
+  id: string;
+  site: string;
+  login_url: string;
+  username: string;
+  notes: string;
+  created_by: "you" | "agent";
+  last_used_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type CredentialInput = {
+  site: string;
+  login_url: string;
+  username: string;
+  /** Leave empty when editing to keep the current password. */
+  password: string;
+  notes: string;
+};
+
+export type VaultStatus = {
+  unlocked: boolean;
+  entries: number;
+  recent_access: { site: string; action: string; at: string }[];
+};
+
 // ---------- Endpoints ----------
 
 export const getHealth = (init?: RequestInit) => apiGet<Health>("/api/health", init);
@@ -282,3 +357,20 @@ export const rescoreJob = (id: string) =>
   apiSend<void>("POST", `/api/jobs/${encodeURIComponent(id)}/rescore`);
 export const updateSettings = (patch: SettingsPatch) => apiSend<Settings>("PUT", "/api/settings", patch);
 export const runEval = (model: string) => apiSend<{ queued: number }>("POST", "/api/evals/run", { model });
+export const saveResume = (content: string) => apiSend<ResumeView>("PUT", "/api/profile/resume", { content });
+export const getResumeVersion = (id: string) =>
+  apiGet<ResumeVersion>(`/api/profile/resume/versions/${id}`, { cache: "no-store" });
+export const saveFacts = (facts: Facts) => apiSend<FactsView>("PUT", "/api/profile/facts", facts);
+export const createAnswer = (input: AnswerInput) => apiSend<Answer>("POST", "/api/answers", input);
+export const updateAnswer = (id: string, input: AnswerInput) =>
+  apiSend<Answer>("PUT", `/api/answers/${id}`, input);
+export const deleteAnswer = (id: string) => apiSend<void>("DELETE", `/api/answers/${id}`);
+export const createCredential = (input: CredentialInput) =>
+  apiSend<Credential>("POST", "/api/vault", input);
+export const updateCredential = (id: string, input: CredentialInput) =>
+  apiSend<Credential>("PUT", `/api/vault/${id}`, input);
+export const deleteCredential = (id: string) => apiSend<void>("DELETE", `/api/vault/${id}`);
+export const revealPassword = (id: string) =>
+  apiSend<{ password: string }>("POST", `/api/vault/${id}/reveal`);
+export const generatePassword = (length = 20) =>
+  apiGet<{ password: string }>(`/api/vault/generate?length=${length}`, { cache: "no-store" });

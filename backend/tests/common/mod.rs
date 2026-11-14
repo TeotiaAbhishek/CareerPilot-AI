@@ -6,8 +6,12 @@ use careerpilot_api::{
     llm::ollama::OllamaClient,
     scoring::Scorer,
     scraper::seek::{Politeness, SeekClient},
+    vault::crypto::VaultKey,
 };
 use sqlx::PgPool;
+
+/// A fixed key for tests (32 zero bytes). Never use it for real.
+pub const TEST_VAULT_KEY: &str = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=";
 
 /// Nothing listens on port 9, so calls to it fail fast.
 pub const NOWHERE: &str = "http://127.0.0.1:9";
@@ -15,32 +19,39 @@ pub const NOWHERE: &str = "http://127.0.0.1:9";
 /// Start the real app on a random port and return its base URL.
 /// `seek_base_url` points the scraper at a fake SEEK in tests.
 pub async fn spawn_app(db: PgPool, seek_base_url: &str) -> String {
-    spawn_full(db, seek_base_url, NOWHERE).await.0
+    spawn_full(db, seek_base_url, NOWHERE, true).await.0
+}
+
+/// The app with no VAULT_KEY, so the vault is locked.
+pub async fn spawn_locked_vault_app(db: PgPool) -> String {
+    spawn_full(db, NOWHERE, NOWHERE, false).await.0
 }
 
 /// Like `spawn_app`, but scoring talks to `ollama_url` (a fake Ollama in tests).
 /// The worker is not started: tests call `scorer.process_next()` themselves.
 pub async fn spawn_scoring_app(db: PgPool, ollama_url: &str) -> (String, Scorer) {
-    spawn_full(db, NOWHERE, ollama_url).await
+    spawn_full(db, NOWHERE, ollama_url, true).await
 }
 
-async fn spawn_full(db: PgPool, seek_base_url: &str, ollama_url: &str) -> (String, Scorer) {
-    // A resume and profile in a fresh temp folder.
-    let dir = std::env::temp_dir().join(format!("careerpilot-test-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("resume.md"),
-        "# Test Person\nSQL, Python, Power BI",
+async fn spawn_full(
+    db: PgPool,
+    seek_base_url: &str,
+    ollama_url: &str,
+    unlocked: bool,
+) -> (String, Scorer) {
+    // Scoring needs a resume and a location.
+    sqlx::query("UPDATE profile_facts SET city = 'Sydney', state = 'NSW'")
+        .execute(&db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO resume_versions (content) VALUES ('# Test Person, SQL, Python, Power BI')",
     )
+    .execute(&db)
+    .await
     .unwrap();
-    std::fs::write(dir.join("profile.yaml"), "location:\n  city: Sydney").unwrap();
 
-    let scorer = Scorer::new(
-        db.clone(),
-        OllamaClient::new(ollama_url, 8192).unwrap(),
-        dir.join("resume.md"),
-        dir.join("profile.yaml"),
-    );
+    let scorer = Scorer::new(db.clone(), OllamaClient::new(ollama_url, 8192).unwrap());
     let state = AppState {
         db,
         seek: SeekClient::new(seek_base_url, Politeness::none()).unwrap(),
@@ -49,6 +60,7 @@ async fn spawn_full(db: PgPool, seek_base_url: &str, ollama_url: &str) -> (Strin
             timezone: chrono_tz::Australia::Sydney,
         },
         scorer: scorer.clone(),
+        vault: unlocked.then(|| VaultKey::from_base64(TEST_VAULT_KEY).unwrap()),
     };
     let app = build_app(state, "http://localhost:3000");
 

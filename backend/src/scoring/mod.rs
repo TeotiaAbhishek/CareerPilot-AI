@@ -13,7 +13,6 @@ pub mod metrics;
 pub mod prompt;
 
 use std::{
-    path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -25,7 +24,7 @@ use tokio::sync::Notify;
 
 use crate::{
     llm::ollama::{OllamaClient, OllamaError},
-    settings,
+    profile, settings,
 };
 use prompt::{JobForPrompt, PROMPT_VERSION, SYSTEM_PROMPT, output_schema, user_prompt};
 
@@ -43,8 +42,6 @@ pub struct Scorer {
 struct Inner {
     db: PgPool,
     ollama: OllamaClient,
-    resume_path: PathBuf,
-    profile_path: PathBuf,
     wake: Notify,
     state: Mutex<WorkerState>,
 }
@@ -53,7 +50,7 @@ struct Inner {
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct WorkerState {
     pub current: Option<CurrentJob>,
-    /// Set when the whole queue is stuck (Ollama down, model or resume missing).
+    /// Set when the whole queue is stuck (Ollama down, model missing, no resume yet).
     pub paused_reason: Option<String>,
     pub last_scored_at: Option<DateTime<Utc>>,
 }
@@ -103,18 +100,11 @@ enum Failure {
 }
 
 impl Scorer {
-    pub fn new(
-        db: PgPool,
-        ollama: OllamaClient,
-        resume_path: PathBuf,
-        profile_path: PathBuf,
-    ) -> Self {
+    pub fn new(db: PgPool, ollama: OllamaClient) -> Self {
         Self {
             inner: Arc::new(Inner {
                 db,
                 ollama,
-                resume_path,
-                profile_path,
                 wake: Notify::new(),
                 state: Mutex::new(WorkerState::default()),
             }),
@@ -221,12 +211,27 @@ impl Scorer {
             return Err(Failure::Job("the job has no description".into()));
         };
 
-        // Read on every job, so edits to your resume apply without a restart.
-        let resume = read_input(&self.inner.resume_path, "resume").await?;
-        let profile = read_input(&self.inner.profile_path, "candidate profile").await?;
+        // Read on every job, so a resume or facts change applies to the next job.
+        let resume = profile::current_resume(db)
+            .await
+            .map_err(|e| Failure::Paused(e.to_string()))?
+            .ok_or_else(|| {
+                Failure::Paused("Add your resume on the Profile page to start scoring.".into())
+            })?;
+        let facts = profile::load_facts(db)
+            .await
+            .map_err(|e| Failure::Paused(e.to_string()))?;
+        // Without location and work rights the model would invent hard blockers.
+        if facts.city.is_empty() {
+            return Err(Failure::Paused(
+                "Fill in your Facts (location and work rights) on the Profile page to start scoring."
+                    .into(),
+            ));
+        }
+        let profile = profile::profile_for_prompt(&facts);
 
         let user = user_prompt(
-            &resume,
+            &resume.content,
             &profile,
             &JobForPrompt {
                 title: &job.title,
@@ -255,8 +260,9 @@ impl Scorer {
 
         sqlx::query(
             "INSERT INTO job_scores (job_id, model, prompt_version, score, summary,
-                                     matched, missing, unknown, hard_blockers, duration_ms)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                                     matched, missing, unknown, hard_blockers, duration_ms,
+                                     resume_version_id)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(job_id)
         .bind(model)
@@ -268,6 +274,7 @@ impl Scorer {
         .bind(sqlx::types::Json(clean_list(answer.unknown_requirements)))
         .bind(sqlx::types::Json(clean_list(answer.hard_blockers)))
         .bind(duration_ms)
+        .bind(resume.id)
         .execute(db)
         .await
         .map_err(|e| Failure::Job(format!("could not save the score: {e}")))?;
@@ -343,20 +350,6 @@ async fn delete_request(db: &PgPool, job_id: &str, model: &str) -> sqlx::Result<
         .execute(db)
         .await
         .map(|_| ())
-}
-
-async fn read_input(path: &PathBuf, what: &str) -> Result<String, Failure> {
-    match tokio::fs::read_to_string(path).await {
-        Ok(text) if !text.trim().is_empty() => Ok(text),
-        Ok(_) => Err(Failure::Paused(format!(
-            "Your {what} file is empty: {}",
-            path.display()
-        ))),
-        Err(_) => Err(Failure::Paused(format!(
-            "Your {what} file was not found: {}",
-            path.display()
-        ))),
-    }
 }
 
 /// Trim, drop blanks and duplicates, keep at most MAX_ITEMS.

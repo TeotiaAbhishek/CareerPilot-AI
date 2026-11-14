@@ -1,16 +1,16 @@
-import { UserRound } from "lucide-react";
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader } from "@/components/ui/page-header";
+import { ProfileView } from "@/components/profile/profile-view";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export const metadata: Metadata = { title: "Profile" };
 
-export default function Page() {
+export default function ProfilePage() {
+  // The open tab lives in the URL (?tab=vault), which needs Suspense.
   return (
-    <>
-      <PageHeader title="Profile" description="Your master resume, application facts and saved logins." />
-      <EmptyState icon={UserRound} title="Profile not set up" description="Your resume, answers to common questions and the encrypted password vault will live here." />
-    </>
+    <Suspense fallback={<Skeleton className="h-96 w-full" />}>
+      <ProfileView />
+    </Suspense>
   );
 }

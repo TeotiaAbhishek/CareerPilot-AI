@@ -17,9 +17,10 @@ pub struct Config {
     pub ollama_url: String,
     /// The model's context window in tokens. Resume + profile + job is ~4-6k.
     pub ollama_num_ctx: u32,
-    /// Your resume and profile, the same files v1 uses.
+    /// v1's resume file, copied into the database on first start.
     pub resume_path: PathBuf,
-    pub profile_path: PathBuf,
+    /// Base64 AES-256 key for the password vault. None leaves the vault locked.
+    pub vault_key: Option<String>,
 }
 
 impl Config {
@@ -56,9 +57,9 @@ impl Config {
         let resume_path = std::env::var("RESUME_PATH")
             .unwrap_or_else(|_| "../data/master_resume.md".into())
             .into();
-        let profile_path = std::env::var("PROFILE_PATH")
-            .unwrap_or_else(|_| "../config/candidate_profile.yaml".into())
-            .into();
+        let vault_key = std::env::var("VAULT_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty());
 
         Ok(Self {
             database_url,
@@ -70,7 +71,7 @@ impl Config {
             ollama_url,
             ollama_num_ctx,
             resume_path,
-            profile_path,
+            vault_key,
         })
     }
 }

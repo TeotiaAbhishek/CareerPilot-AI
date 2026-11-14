@@ -18,6 +18,10 @@ pub enum AppError {
     #[error("{0}")]
     Conflict(String),
 
+    /// Something the server needs isn't set up (e.g. the vault key).
+    #[error("{0}")]
+    Unavailable(String),
+
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 
@@ -31,6 +35,7 @@ impl IntoResponse for AppError {
             AppError::NotFound(m) => (StatusCode::NOT_FOUND, m.clone()),
             AppError::BadRequest(m) => (StatusCode::BAD_REQUEST, m.clone()),
             AppError::Conflict(m) => (StatusCode::CONFLICT, m.clone()),
+            AppError::Unavailable(m) => (StatusCode::SERVICE_UNAVAILABLE, m.clone()),
             // Never leak database or internal details to the client.
             AppError::Database(_) | AppError::Other(_) => {
                 tracing::error!(error = ?self, "internal error");
