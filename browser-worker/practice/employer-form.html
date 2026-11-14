@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice employer form: Data Analyst</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #fafaf9; color: #1c1917; }
+  main { max-width: 620px; margin: 32px auto; padding: 0 20px; }
+  .row { margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  input, select, textarea { width: 100%; padding: 8px; border: 1px solid #d6d3d1; border-radius: 6px; font: inherit; box-sizing: border-box; }
+  input[type=checkbox] { width: auto; }
+  .check label { display: inline; font-weight: 400; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  button { font: inherit; padding: 10px 18px; border-radius: 6px; border: 0; background: #0f766e; color: #fff; }
+  .error { color: #b91c1c; }
+</style>
+</head>
+<body>
+<main>
+  <p>Practice careers site · not a real employer</p>
+  <h1>Apply: Data Analyst</h1>
+  <form id="form">
+    <div class="two">
+      <div class="row"><label for="first">First name *</label><input id="first" name="first_name" required></div>
+      <div class="row"><label for="last">Last name *</label><input id="last" name="last_name" required></div>
+    </div>
+    <div class="row"><label for="email">Email address *</label><input id="email" type="email" required></div>
+    <div class="row"><label for="phone">Mobile number *</label><input id="phone" type="tel" required></div>
+    <div class="row"><label for="linkedin">LinkedIn profile</label><input id="linkedin" type="url"></div>
+    <div class="row"><label for="suburb">Suburb</label><input id="suburb"></div>
+    <div class="row"><label for="cv">Upload your CV *</label><input id="cv" type="file" required></div>
+    <div class="row">
+      <label for="notice">What is your notice period?</label>
+      <input id="notice">
+    </div>
+    <div class="row">
+      <label for="why">Why are you interested in this role? *</label>
+      <textarea id="why" rows="4" required></textarea>
+    </div>
+    <div class="row">
+      <label for="heard">How did you hear about us?</label>
+      <select id="heard">
+        <option value="">Please select</option>
+        <option>Job board</option><option>LinkedIn</option><option>Friend or colleague</option><option>Company website</option>
+      </select>
+    </div>
+    <div class="row check"><input type="checkbox" id="privacy" required> <label for="privacy">I have read and accept the privacy policy *</label></div>
+    <p class="error" id="error"></p>
+    <button type="submit">Submit application</button>
+  </form>
+</main>
+<script>
+  document.getElementById("form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    document.querySelector("main").innerHTML = "<h1>Thanks (practice)</h1><p>Nothing was sent.</p>";
+  });
+</script>
+</body>
+</html>

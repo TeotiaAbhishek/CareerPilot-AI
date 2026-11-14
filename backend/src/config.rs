@@ -21,6 +21,8 @@ pub struct Config {
     pub resume_path: PathBuf,
     /// Base64 AES-256 key for the password vault. None leaves the vault locked.
     pub vault_key: Option<String>,
+    /// The browser worker (browser-worker/, `npm start`).
+    pub browser_worker_url: String,
 }
 
 impl Config {
@@ -60,6 +62,8 @@ impl Config {
         let vault_key = std::env::var("VAULT_KEY")
             .ok()
             .filter(|k| !k.trim().is_empty());
+        let browser_worker_url =
+            std::env::var("BROWSER_WORKER_URL").unwrap_or_else(|_| "http://127.0.0.1:8090".into());
 
         Ok(Self {
             database_url,
@@ -72,6 +76,7 @@ impl Config {
             ollama_num_ctx,
             resume_path,
             vault_key,
+            browser_worker_url,
         })
     }
 }

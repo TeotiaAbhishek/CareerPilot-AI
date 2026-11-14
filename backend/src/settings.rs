@@ -22,13 +22,20 @@ pub struct Settings {
     pub drafting_model: String,
     /// Let the drafting model think before writing (slower, better).
     pub drafting_think: bool,
+    /// How many applications the agent fills at once (one browser tab each).
+    pub apply_parallel: i32,
+    /// At most this many new applications in any 24 hours.
+    pub apply_daily_cap: i32,
+    /// The Ollama model for form questions code can't answer.
+    pub apply_model: String,
+    pub apply_think: bool,
     pub updated_at: DateTime<Utc>,
 }
 
 pub async fn load(db: &PgPool) -> sqlx::Result<Settings> {
     sqlx::query_as(
         "SELECT scoring_enabled, scoring_model, relevance_threshold, drafting_model, drafting_think,
-                updated_at
+                apply_parallel, apply_daily_cap, apply_model, apply_think, updated_at
          FROM settings",
     )
     .fetch_one(db)
@@ -47,6 +54,10 @@ pub struct SettingsPatch {
     pub relevance_threshold: Option<i32>,
     pub drafting_model: Option<String>,
     pub drafting_think: Option<bool>,
+    pub apply_parallel: Option<i32>,
+    pub apply_daily_cap: Option<i32>,
+    pub apply_model: Option<String>,
+    pub apply_think: Option<bool>,
 }
 
 pub async fn update(
@@ -55,8 +66,10 @@ pub async fn update(
 ) -> AppResult<Json<Settings>> {
     let model = patch.scoring_model.map(|m| m.trim().to_string());
     let drafting_model = patch.drafting_model.map(|m| m.trim().to_string());
+    let apply_model = patch.apply_model.map(|m| m.trim().to_string());
     if model.as_deref().is_some_and(str::is_empty)
         || drafting_model.as_deref().is_some_and(str::is_empty)
+        || apply_model.as_deref().is_some_and(str::is_empty)
     {
         return Err(AppError::BadRequest("Model can't be empty.".into()));
     }
@@ -66,6 +79,17 @@ pub async fn update(
     {
         return Err(AppError::BadRequest("Threshold must be 0-100.".into()));
     }
+    if patch.apply_parallel.is_some_and(|n| !(1..=5).contains(&n)) {
+        return Err(AppError::BadRequest(
+            "Applications at once must be 1-5.".into(),
+        ));
+    }
+    if patch
+        .apply_daily_cap
+        .is_some_and(|n| !(1..=50).contains(&n))
+    {
+        return Err(AppError::BadRequest("The daily limit must be 1-50.".into()));
+    }
 
     let settings = sqlx::query_as(
         "UPDATE settings SET
@@ -74,20 +98,30 @@ pub async fn update(
             relevance_threshold = coalesce($3, relevance_threshold),
             drafting_model = coalesce($4, drafting_model),
             drafting_think = coalesce($5, drafting_think),
+            apply_parallel = coalesce($6, apply_parallel),
+            apply_daily_cap = coalesce($7, apply_daily_cap),
+            apply_model = coalesce($8, apply_model),
+            apply_think = coalesce($9, apply_think),
             updated_at = now()
          RETURNING scoring_enabled, scoring_model, relevance_threshold, drafting_model,
-                   drafting_think, updated_at",
+                   drafting_think, apply_parallel, apply_daily_cap, apply_model, apply_think,
+                   updated_at",
     )
     .bind(patch.scoring_enabled)
     .bind(model)
     .bind(patch.relevance_threshold)
     .bind(drafting_model)
     .bind(patch.drafting_think)
+    .bind(patch.apply_parallel)
+    .bind(patch.apply_daily_cap)
+    .bind(apply_model)
+    .bind(patch.apply_think)
     .fetch_one(&state.db)
     .await?;
 
     // A new model or switching scoring on means there may be work to do now.
     state.scorer.wake();
     state.drafter.wake();
+    state.applier.wake();
     Ok(Json(settings))
 }

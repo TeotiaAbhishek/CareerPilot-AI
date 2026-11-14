@@ -1,6 +1,6 @@
 //! The drafting worker: takes queued documents one at a time and asks the
 //! local model to write them. Runs next to the scoring worker; both share one
-//! Ollama client, so they take turns on the GPU.
+//! model client, so they take turns on the GPU.
 
 use std::{
     sync::{Arc, Mutex},
@@ -24,7 +24,7 @@ use super::{
     resume::MasterResume,
 };
 use crate::{
-    llm::ollama::{ChatOptions, OllamaClient, OllamaError},
+    llm::{ChatOptions, LlmClient, LlmError},
     profile, settings,
 };
 
@@ -40,7 +40,7 @@ pub struct Drafter {
 
 struct Inner {
     db: PgPool,
-    ollama: OllamaClient,
+    llm: LlmClient,
     wake: Notify,
     state: Mutex<DrafterState>,
 }
@@ -99,11 +99,11 @@ struct JobRow {
 }
 
 impl Drafter {
-    pub fn new(db: PgPool, ollama: OllamaClient) -> Self {
+    pub fn new(db: PgPool, llm: LlmClient) -> Self {
         Self {
             inner: Arc::new(Inner {
                 db,
-                ollama,
+                llm,
                 wake: Notify::new(),
                 state: Mutex::new(DrafterState::default()),
             }),
@@ -259,7 +259,7 @@ impl Drafter {
         let started = Instant::now();
         let value = self
             .inner
-            .ollama
+            .llm
             .chat_json_with(
                 &settings.drafting_model,
                 system,
@@ -273,7 +273,7 @@ impl Drafter {
             .await
             .map_err(|e| match e {
                 e if e.is_unavailable() => Failure::Paused(e.to_string()),
-                OllamaError::BadAnswer(m) => Failure::Document(m),
+                LlmError::BadAnswer(m) => Failure::Document(m),
                 e => Failure::Document(e.to_string()),
             })?;
         let duration_ms = started.elapsed().as_millis() as i32;

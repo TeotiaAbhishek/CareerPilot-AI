@@ -1,4 +1,5 @@
 pub mod answers;
+pub mod apply;
 pub mod config;
 pub mod db;
 pub mod documents;
@@ -30,6 +31,7 @@ use tower_http::{
     trace::TraceLayer,
 };
 
+use apply::runner::Applier;
 use documents::worker::Drafter;
 use scoring::Scorer;
 use scraper::seek::SeekClient;
@@ -50,6 +52,7 @@ pub struct AppState {
     pub schedule: ScheduleInfo,
     pub scorer: Scorer,
     pub drafter: Drafter,
+    pub applier: Applier,
     /// None when VAULT_KEY isn't set: the vault endpoints then say it's locked.
     pub vault: Option<VaultKey>,
 }
@@ -120,7 +123,19 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/documents/status", get(documents::status))
         .route("/documents/{id}", get(documents::get).put(documents::save))
         .route("/documents/{id}/approve", post(documents::approve))
-        .route("/documents/{id}/docx", get(documents::download_docx));
+        .route("/documents/{id}/docx", get(documents::download_docx))
+        .route("/jobs/{id}/apply", post(apply::start))
+        .route("/applications", get(apply::list))
+        .route("/applications/practice", post(apply::practice))
+        .route("/applications/{id}", get(apply::get))
+        .route("/applications/{id}/events", get(apply::events))
+        .route("/applications/{id}/answers", post(apply::answer))
+        .route("/applications/{id}/retry", post(apply::retry))
+        .route("/applications/{id}/submitted", post(apply::submitted))
+        .route("/applications/{id}/cancel", post(apply::cancel))
+        .route("/applications/{id}/focus", post(apply::focus))
+        .route("/apply/status", get(apply::status))
+        .route("/browser/open", post(apply::open_browser));
 
     Router::new()
         .nest("/api", api)

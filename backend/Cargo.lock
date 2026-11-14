@@ -323,6 +323,7 @@ dependencies = [
  "sqlx",
  "thiserror",
  "tokio",
+ "tokio-stream",
  "tower-http 0.7.1",
  "tracing",
  "tracing-subscriber",
@@ -2845,6 +2846,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

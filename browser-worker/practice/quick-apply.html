@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice Quick Apply: Data Analyst</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c2330; }
+  header { background: #1c2330; color: #fff; padding: 12px 24px; font-weight: 600; }
+  main { max-width: 640px; margin: 24px auto; background: #fff; border-radius: 12px; padding: 24px 28px; }
+  .steps { display: flex; gap: 8px; font-size: 13px; color: #6b7280; margin-bottom: 16px; }
+  .steps .on { color: #1c2330; font-weight: 600; }
+  fieldset { border: 0; padding: 0; margin: 0 0 18px; }
+  legend, .q { font-weight: 600; margin-bottom: 6px; display: block; }
+  label.opt { display: block; margin: 4px 0; }
+  select, input[type=text], textarea { width: 100%; padding: 8px; border: 1px solid #c7ccd4; border-radius: 6px; font: inherit; box-sizing: border-box; }
+  .row { margin-bottom: 18px; }
+  .buttons { display: flex; gap: 12px; margin-top: 24px; }
+  button { font: inherit; padding: 10px 18px; border-radius: 6px; border: 1px solid #1c2330; background: #fff; cursor: pointer; }
+  button.primary { background: #2b59c3; border-color: #2b59c3; color: #fff; }
+  [role=alert] { color: #b42318; margin-top: 12px; }
+  .hidden { display: none; }
+  .doc { margin-bottom: 18px; }
+  /* Like SEEK: the real file box is invisible, with no label of its own. */
+  .visually-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+  .doc .head { display: flex; justify-content: space-between; align-items: center; }
+  .doc h3 { margin: 0 0 6px; font-size: 15px; }
+  button.link { border: 0; padding: 0; color: #2b59c3; font-weight: 600; background: none; }
+  .done { text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body>
+<header>Practice job board · not a real site</header>
+<main>
+  <div class="steps"><span data-step-label="1">1 Documents</span>›<span data-step-label="2">2 Employer questions</span>›<span data-step-label="3">3 Profile</span>›<span data-step-label="4">4 Review and submit</span></div>
+  <h1 id="heading">Data Analyst at Practice Co</h1>
+
+  <form id="form" novalidate>
+    <section data-step="1">
+      <h2>Choose documents</h2>
+      <!-- Like SEEK: your saved resumés are the options (the last one is
+           picked for you), and "Upload" opens a file picker. -->
+      <div class="doc">
+        <div class="head"><h3 id="resume-h">Resumé</h3><button type="button" class="link" id="resume-upload">Upload</button></div>
+        <input type="file" id="resume-file" class="visually-hidden" accept=".pdf,.doc,.docx,.rtf">
+        <div role="radiogroup" aria-labelledby="resume-h" id="resume-options">
+          <label class="opt"><input type="radio" name="resume-choice" value="saved" required checked> Old CV 2024.pdf <small>Added 20 days ago</small></label>
+          <label class="opt"><input type="radio" name="resume-choice" value="none"> Don't include a resumé</label>
+        </div>
+      </div>
+      <div class="doc">
+        <div class="head"><h3 id="cover-h">Cover letter</h3><button type="button" class="link" id="cover-upload">Upload</button></div>
+        <input type="file" id="cover-file" class="visually-hidden" accept=".pdf,.doc,.docx,.rtf">
+        <div role="radiogroup" aria-labelledby="cover-h" id="cover-options">
+          <label class="opt"><input type="radio" name="cover-choice" value="write" required> Write a cover letter</label>
+          <label class="opt"><input type="radio" name="cover-choice" value="none" checked> Don't include a cover letter</label>
+        </div>
+      </div>
+    </section>
+
+    <section data-step="2" class="hidden">
+      <h2>Answer employer questions</h2>
+      <div class="row">
+        <label for="rights" class="q">Which of the following statements best describes your right to work in Australia?</label>
+        <select id="rights" required>
+          <option value="">Select an option</option>
+          <option value="citizen">I'm an Australian citizen</option>
+          <option value="pr">I'm a permanent resident and/or NZ citizen</option>
+          <option value="graduate">I have a temporary graduate visa with full work rights</option>
+          <option value="restricted">I have a temporary visa with restrictions on work hours</option>
+          <option value="sponsor">I require sponsorship to work for a new employer</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="years" class="q">How many years' experience do you have as a data analyst?</label>
+        <select id="years" required>
+          <option value="">Select an option</option>
+          <option>No experience</option>
+          <option>Less than 1 year</option>
+          <option>1 year</option>
+          <option>2 years</option>
+          <option>3 years</option>
+          <option>4 years</option>
+          <option>More than 5 years</option>
+        </select>
+      </div>
+      <fieldset>
+        <legend>Which of the following tools have you used? (Power BI)</legend>
+        <label class="opt"><input type="radio" name="powerbi" value="yes" required> Yes</label>
+        <label class="opt"><input type="radio" name="powerbi" value="no"> No</label>
+      </fieldset>
+      <fieldset>
+        <legend>Do you hold a current Working With Children Check?</legend>
+        <label class="opt"><input type="radio" name="wwcc" value="yes" required> Yes</label>
+        <label class="opt"><input type="radio" name="wwcc" value="no"> No</label>
+      </fieldset>
+      <div class="row">
+        <label for="salary" class="q">What's your expected annual base salary?</label>
+        <select id="salary" required>
+          <option value="">Select an option</option>
+          <option>$60k</option><option>$70k</option><option>$80k</option><option>$90k</option>
+          <option>$100k</option><option>$110k</option><option>$120k+</option>
+        </select>
+      </div>
+      <div class="row">
+        <label for="why" class="q">Why are you interested in this role? (optional)</label>
+        <textarea id="why" rows="4"></textarea>
+      </div>
+    </section>
+
+    <section data-step="3" class="hidden">
+      <h2>Update your profile</h2>
+      <p>Employers see your profile with your application. You can change it later.</p>
+      <div class="row">
+        <label for="role-title">Most recent role title</label>
+        <input type="text" id="role-title" value="Data Analyst">
+      </div>
+    </section>
+
+    <section data-step="4" class="hidden">
+      <h2>Review and submit</h2>
+      <p id="summary"></p>
+    </section>
+
+    <div role="alert" id="error"></div>
+
+    <div class="buttons">
+      <button type="button" id="back" class="hidden">Back</button>
+      <button type="button" id="continue" class="primary">Continue</button>
+      <button type="submit" id="submit" class="primary hidden">Submit application</button>
+    </div>
+  </form>
+
+  <div id="done" class="done hidden">
+    <h2>Application sent (practice)</h2>
+    <p>Nothing was sent anywhere. This was only a practice form.</p>
+  </div>
+</main>
+
+<script>
+  let step = 1;
+  const $ = (s) => document.querySelector(s);
+  const section = (n) => document.querySelector(`[data-step="${n}"]`);
+
+  function show() {
+    for (let n = 1; n <= 4; n++) {
+      section(n).classList.toggle("hidden", n !== step);
+      document.querySelector(`[data-step-label="${n}"]`).classList.toggle("on", n === step);
+    }
+    $("#back").classList.toggle("hidden", step === 1);
+    $("#continue").classList.toggle("hidden", step === 4);
+    $("#submit").classList.toggle("hidden", step !== 4);
+    $("#error").textContent = "";
+    if (step === 4) {
+      const picked = (name) => document.querySelector(`input[name="${name}"]:checked`).closest("label").textContent.trim();
+      $("#summary").textContent =
+        `Resumé: ${picked("resume-choice")}. Cover letter: ${picked("cover-choice")}. ` +
+        `Right to work: ${$("#rights").selectedOptions[0].textContent}.`;
+    }
+  }
+
+  // Upload opens the file picker. The new file joins the list, picked.
+  for (const kind of ["resume", "cover"]) {
+    $(`#${kind}-upload`).addEventListener("click", () => $(`#${kind}-file`).click());
+    $(`#${kind}-file`).addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const label = document.createElement("label");
+      label.className = "opt";
+      label.innerHTML = `<input type="radio" name="${kind}-choice" value="new" checked> <span></span> <small>Added just now</small>`;
+      label.querySelector("span").textContent = file.name;
+      $(`#${kind}-options`).prepend(label);
+      e.target.value = "";
+    });
+  }
+
+  function missing() {
+    const s = section(step);
+    for (const el of s.querySelectorAll("select[required]")) if (!el.value) return el.labels[0].textContent;
+    const groups = new Set([...s.querySelectorAll("input[type=radio][required]")].map((r) => r.name));
+    for (const name of groups) if (!s.querySelector(`input[name="${name}"]:checked`)) return name;
+    return null;
+  }
+
+  $("#continue").addEventListener("click", () => {
+    const m = missing();
+    if (m) { $("#error").textContent = `Please answer: ${m}`; return; }
+    step++; show();
+  });
+  $("#back").addEventListener("click", () => { step--; show(); });
+  $("#form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    $("#form").classList.add("hidden");
+    $("#done").classList.remove("hidden");
+  });
+  show();
+</script>
+</body>
+</html>
