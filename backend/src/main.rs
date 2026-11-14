@@ -175,4 +175,12 @@ async fn shutdown_signal() {
         .await
         .expect("failed to listen for Ctrl+C");
     tracing::info!("shutting down");
+    // A run page's live log (SSE) never ends by itself, so don't wait for it
+    // forever: everything else gets 3 seconds. Nothing is lost, because runs
+    // interrupted here go back in the queue on the next start.
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        tracing::info!("stopped (live logs were still open)");
+        std::process::exit(0);
+    });
 }
