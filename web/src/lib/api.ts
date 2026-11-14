@@ -68,7 +68,8 @@ export type Health = {
   version: string;
 };
 
-export type JobSummary = {
+/** Fields every job has, in the list and in the detail. */
+type JobBase = {
   id: string;
   title: string;
   company: string | null;
@@ -84,9 +85,34 @@ export type JobSummary = {
   hidden: boolean;
   viewed_at: string | null;
   scrape_status: "ok" | "failed";
+  /** Your label: the ground truth for evals. */
+  label: JobLabel | null;
+  /** score >= threshold and no hard blockers. null until scored. */
+  relevant: boolean | null;
 };
 
-export type JobDetail = JobSummary & {
+export type JobLabel = "apply" | "maybe" | "no";
+
+export type JobSummary = JobBase & {
+  /** Latest score from the active model, null until scored. */
+  score: number | null;
+  blocker_count: number | null;
+};
+
+export type JobScore = {
+  model: string;
+  prompt_version: string;
+  score: number;
+  summary: string;
+  matched: string[];
+  missing: string[];
+  unknown: string[];
+  hard_blockers: string[];
+  duration_ms: number;
+  created_at: string;
+};
+
+export type JobDetail = JobBase & {
   classification: string | null;
   subclassification: string | null;
   description_html: string | null;
@@ -96,7 +122,24 @@ export type JobDetail = JobSummary & {
   last_seen_at: string;
   scrape_error: string | null;
   legacy_score: number | null;
+  score: JobScore | null;
+  score_error: string | null;
+  /** A Re-score is waiting or running. */
+  score_pending: boolean;
 };
+
+/** The list fields that change when you act on a job in the detail pane. */
+export function summaryPatch(job: JobDetail): Partial<JobSummary> {
+  return {
+    saved: job.saved,
+    hidden: job.hidden,
+    viewed_at: job.viewed_at,
+    label: job.label,
+    relevant: job.relevant,
+    score: job.score?.score ?? null,
+    blocker_count: job.score?.hard_blockers.length ?? null,
+  };
+}
 
 export type JobPage = {
   items: JobSummary[];
@@ -112,6 +155,81 @@ export type Stats = {
   jobs_new_24h: number;
   jobs_unviewed: number;
   jobs_saved: number;
+  jobs_scored: number;
+  jobs_relevant: number;
+};
+
+export type Settings = {
+  scoring_enabled: boolean;
+  scoring_model: string;
+  relevance_threshold: number;
+  updated_at: string;
+};
+
+export type SettingsPatch = Partial<
+  Pick<Settings, "scoring_enabled" | "scoring_model" | "relevance_threshold">
+>;
+
+export type ScoringStatus = {
+  enabled: boolean;
+  model: string;
+  prompt_version: string;
+  threshold: number;
+  ollama: {
+    url: string;
+    reachable: boolean;
+    models: string[];
+    model_installed: boolean;
+    error: string | null;
+  };
+  queue: { requested: number; unscored: number; failed_recently: number };
+  worker: {
+    current: { job_id: string; title: string; model: string; started_at: string } | null;
+    paused_reason: string | null;
+    last_scored_at: string | null;
+  };
+};
+
+export type EvalMetrics = {
+  scored: number;
+  true_positive: number;
+  false_positive: number;
+  false_negative: number;
+  true_negative: number;
+  agreement: number | null;
+  precision: number | null;
+  recall: number | null;
+  mean_score_apply: number | null;
+  mean_score_maybe: number | null;
+  mean_score_no: number | null;
+};
+
+export type EvalRow = {
+  source: "ollama" | "v1";
+  model: string;
+  prompt_version: string;
+  active: boolean;
+  metrics: EvalMetrics;
+};
+
+export type Disagreement = {
+  job_id: string;
+  title: string;
+  company: string | null;
+  label: JobLabel;
+  score: number;
+  blockers: number;
+  summary: string;
+  v1_score: number | null;
+};
+
+export type EvalReport = {
+  threshold: number;
+  active_model: string;
+  prompt_version: string;
+  labels: { apply: number; maybe: number; no: number; total: number };
+  rows: EvalRow[];
+  disagreements: Disagreement[];
 };
 
 export type Search = {
@@ -158,3 +276,9 @@ export const createSearch = (input: SearchInput) => apiSend<Search>("POST", "/ap
 export const updateSearch = (id: string, input: SearchInput) =>
   apiSend<Search>("PUT", `/api/searches/${id}`, input);
 export const deleteSearch = (id: string) => apiSend<void>("DELETE", `/api/searches/${id}`);
+export const setJobLabel = (id: string, label: JobLabel | null) =>
+  apiSend<{ label: JobLabel | null }>("PUT", `/api/jobs/${encodeURIComponent(id)}/label`, { label });
+export const rescoreJob = (id: string) =>
+  apiSend<void>("POST", `/api/jobs/${encodeURIComponent(id)}/rescore`);
+export const updateSettings = (patch: SettingsPatch) => apiSend<Settings>("PUT", "/api/settings", patch);
+export const runEval = (model: string) => apiSend<{ queued: number }>("POST", "/api/evals/run", { model });

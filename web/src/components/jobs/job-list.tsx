@@ -3,10 +3,14 @@
 import { Bookmark, Zap } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { JobSummary } from "@/lib/api";
 import { timeAgo } from "@/lib/format";
+import { LABEL_TONE, LABELS } from "@/lib/scoring";
 import { cn } from "@/lib/utils";
+
+import { ScoreBadge } from "./score-badge";
 
 export function JobList({
   jobs,
@@ -46,9 +50,12 @@ export function JobList({
                     {[job.company, job.location].filter(Boolean).join(" · ")}
                   </p>
                 </div>
-                {job.saved ? (
-                  <Bookmark className="size-4 shrink-0 fill-primary text-primary" aria-label="Saved" />
-                ) : null}
+                <div className="flex shrink-0 items-center gap-2">
+                  {job.saved ? (
+                    <Bookmark className="size-4 fill-primary text-primary" aria-label="Saved" />
+                  ) : null}
+                  <ScoreBadge score={job.score} blockers={job.blocker_count} relevant={job.relevant} />
+                </div>
               </div>
 
               <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -58,6 +65,11 @@ export function JobList({
                   <span className="inline-flex items-center gap-1 text-primary">
                     <Zap className="size-3" aria-hidden /> Quick apply
                   </span>
+                ) : null}
+                {job.label ? (
+                  <Badge tone={LABEL_TONE[job.label]} className="py-0">
+                    {LABELS.find((l) => l.value === job.label)?.text}
+                  </Badge>
                 ) : null}
                 <span className="ml-auto">{job.posted_label ?? timeAgo(job.first_seen_at)}</span>
               </div>

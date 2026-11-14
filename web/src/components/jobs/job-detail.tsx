@@ -11,32 +11,66 @@ import {
   TriangleAlert,
   Zap,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useEffectEvent } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApi } from "@/hooks/use-api";
-import { type JobDetail, type JobPatch, errorMessage, patchJob } from "@/lib/api";
+import {
+  type JobDetail,
+  type JobLabel,
+  type JobPatch,
+  apiGet,
+  errorMessage,
+  patchJob,
+  rescoreJob,
+  setJobLabel,
+} from "@/lib/api";
 import { formatDateTime, timeAgo } from "@/lib/format";
 import { cn } from "@/lib/utils";
+
+import { ScoreBadge } from "./score-badge";
+import { ScorePanel } from "./score-panel";
+
+/** How often to check for a score while one is on its way. */
+const SCORE_POLL_MS = 5000;
 
 /**
  * One job in full. Used both in the right-hand pane of /jobs and on /jobs/[id].
  * Opening a job marks it as viewed. `onChange` tells the list about any change.
+ * With `shortcuts`, the a / m / n keys label the job Apply / Maybe / No.
  */
 export function JobDetailView({
   id,
   onChange,
+  shortcuts = false,
 }: {
   id: string;
   onChange?: (job: JobDetail) => void;
+  shortcuts?: boolean;
 }) {
-  const { data: job, error, loading, mutate } = useApi<JobDetail>(
-    `/api/jobs/${encodeURIComponent(id)}`,
-  );
+  const path = `/api/jobs/${encodeURIComponent(id)}`;
+  const { data: job, error, loading, mutate } = useApi<JobDetail>(path);
   const current = job?.id === id ? job : undefined;
+
+  // While a score is on its way, check every few seconds. (A quiet fetch,
+  // not reload(), so the page doesn't flash a skeleton each time.)
+  const waiting = !!current && (current.score_pending || (!current.score && !current.score_error));
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(() => {
+      apiGet<JobDetail>(path, { cache: "no-store" }).then(
+        (updated) => {
+          mutate(() => updated);
+          if (updated.score && !updated.score_pending) onChange?.(updated);
+        },
+        () => {},
+      );
+    }, SCORE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [waiting, path, mutate, onChange]);
 
   // Mark as viewed the first time it's opened.
   useEffect(() => {
@@ -68,6 +102,54 @@ export function JobDetailView({
     }
   }
 
+  async function label(value: JobLabel | null) {
+    if (!current) return;
+    const previous = current.label;
+    const updated = { ...current, label: value };
+    // Show it straight away; put it back if the API says no.
+    mutate(() => updated);
+    onChange?.(updated);
+    try {
+      await setJobLabel(current.id, value);
+    } catch (e) {
+      mutate((j) => ({ ...j, label: previous }));
+      onChange?.({ ...updated, label: previous });
+      toast.error(errorMessage(e));
+    }
+  }
+
+  async function rescore() {
+    if (!current) return;
+    try {
+      await rescoreJob(current.id);
+      mutate((j) => ({ ...j, score_pending: true }));
+      toast.success("Queued for scoring");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
+
+  // Keyboard labelling. useEffectEvent always sees the latest job and `label`,
+  // without re-adding the listener on every render.
+  const onLabelKey = useEffectEvent((value: JobLabel) => {
+    if (current) void label(current.label === value ? null : value);
+  });
+  useEffect(() => {
+    if (!shortcuts) return;
+    function onKey(event: KeyboardEvent) {
+      const target = event.target as HTMLElement;
+      if (target.closest("input, select, textarea")) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const keys: Record<string, JobLabel> = { a: "apply", m: "maybe", n: "no" };
+      const value = keys[event.key];
+      if (!value) return;
+      event.preventDefault();
+      onLabelKey(value);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shortcuts]);
+
   if (error) {
     return (
       <div className="rounded-xl border border-danger/30 bg-danger/5 p-6 text-sm text-danger">
@@ -88,13 +170,11 @@ export function JobDetailView({
               <Zap className="size-3" aria-hidden /> Quick apply
             </Badge>
           ) : null}
-          {current.legacy_score !== null ? (
-            <Badge tone={current.legacy_score >= 60 ? "success" : "neutral"} title="Score from CareerPilot v1 (OpenAI). Replaced by Ollama scoring in F3.">
-              v1 score {current.legacy_score}
-            </Badge>
-          ) : (
-            <Badge>Not scored yet</Badge>
-          )}
+          <ScoreBadge
+            score={current.score?.score ?? null}
+            blockers={current.score?.hard_blockers.length ?? null}
+            relevant={current.relevant}
+          />
           {current.hidden ? <Badge tone="warning">Hidden</Badge> : null}
         </div>
 
@@ -146,6 +226,8 @@ export function JobDetailView({
           </Button>
         </div>
       </header>
+
+      <ScorePanel job={current} onLabel={label} onRescore={rescore} />
 
       {current.scrape_status === "failed" ? (
         <div className="m-6 mb-0 flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">
