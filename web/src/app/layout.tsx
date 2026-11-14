@@ -23,9 +23,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <body className="min-h-dvh">
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <Sidebar />
-          <div className="lg:pl-64">
+          <div className="lg:pl-64 print:pl-0">
             <Topbar />
-            <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-10">{children}</main>
+            <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-10 print:max-w-none print:p-0">{children}</main>
           </div>
           <Toaster />
         </ThemeProvider>

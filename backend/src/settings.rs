@@ -18,12 +18,18 @@ pub struct Settings {
     pub scoring_model: String,
     /// A job is relevant when its score is at least this and it has no hard blockers.
     pub relevance_threshold: i32,
+    /// The Ollama model that writes tailored documents.
+    pub drafting_model: String,
+    /// Let the drafting model think before writing (slower, better).
+    pub drafting_think: bool,
     pub updated_at: DateTime<Utc>,
 }
 
 pub async fn load(db: &PgPool) -> sqlx::Result<Settings> {
     sqlx::query_as(
-        "SELECT scoring_enabled, scoring_model, relevance_threshold, updated_at FROM settings",
+        "SELECT scoring_enabled, scoring_model, relevance_threshold, drafting_model, drafting_think,
+                updated_at
+         FROM settings",
     )
     .fetch_one(db)
     .await
@@ -39,6 +45,8 @@ pub struct SettingsPatch {
     pub scoring_enabled: Option<bool>,
     pub scoring_model: Option<String>,
     pub relevance_threshold: Option<i32>,
+    pub drafting_model: Option<String>,
+    pub drafting_think: Option<bool>,
 }
 
 pub async fn update(
@@ -46,7 +54,10 @@ pub async fn update(
     Json(patch): Json<SettingsPatch>,
 ) -> AppResult<Json<Settings>> {
     let model = patch.scoring_model.map(|m| m.trim().to_string());
-    if model.as_deref().is_some_and(str::is_empty) {
+    let drafting_model = patch.drafting_model.map(|m| m.trim().to_string());
+    if model.as_deref().is_some_and(str::is_empty)
+        || drafting_model.as_deref().is_some_and(str::is_empty)
+    {
         return Err(AppError::BadRequest("Model can't be empty.".into()));
     }
     if patch
@@ -61,16 +72,22 @@ pub async fn update(
             scoring_enabled = coalesce($1, scoring_enabled),
             scoring_model = coalesce($2, scoring_model),
             relevance_threshold = coalesce($3, relevance_threshold),
+            drafting_model = coalesce($4, drafting_model),
+            drafting_think = coalesce($5, drafting_think),
             updated_at = now()
-         RETURNING scoring_enabled, scoring_model, relevance_threshold, updated_at",
+         RETURNING scoring_enabled, scoring_model, relevance_threshold, drafting_model,
+                   drafting_think, updated_at",
     )
     .bind(patch.scoring_enabled)
     .bind(model)
     .bind(patch.relevance_threshold)
+    .bind(drafting_model)
+    .bind(patch.drafting_think)
     .fetch_one(&state.db)
     .await?;
 
     // A new model or switching scoring on means there may be work to do now.
     state.scorer.wake();
+    state.drafter.wake();
     Ok(Json(settings))
 }

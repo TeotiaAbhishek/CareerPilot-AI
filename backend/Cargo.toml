@@ -12,6 +12,7 @@ base64 = "0.23.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 clap = { version = "4.6.7", features = ["derive"] }
+docx-rs = { version = "0.4.22", default-features = false }
 dotenvy = "0.15.7"
 html2text = "0.17.4"
 rand = "0.10.3"
