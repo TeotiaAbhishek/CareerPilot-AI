@@ -172,6 +172,7 @@ export type Settings = {
   /** A second model call checks the agent's answers before they go in. */
   apply_review: boolean;
   auto_approve: boolean;
+  follow_up_second: boolean;
   updated_at: string;
 };
 
@@ -591,6 +592,8 @@ export type Card = {
   column: Column;
   detail: string;
   application_id: string | null;
+  /** Email drafts (follow-ups, a thank-you) ready for you to send. */
+  emails_due: number;
   applied_at: string | null;
   replied_at: string | null;
   updated_at: string;
@@ -612,6 +615,45 @@ export type Insights = {
   by_score: Breakdown[];
   by_apply_type: Breakdown[];
   by_source: Breakdown[];
+};
+
+export type EmailKind = "application" | "follow_up_1" | "follow_up_2" | "thank_you";
+export type EmailStatus = "scheduled" | "queued" | "drafting" | "ready" | "sent" | "cancelled" | "failed";
+
+export type Email = {
+  id: string;
+  job_id: string;
+  kind: EmailKind;
+  status: EmailStatus;
+  due_at: string;
+  to_address: string | null;
+  subject: string;
+  paragraphs: DraftLine[];
+  flags: Flag[];
+  dismissed_flags: string[];
+  error: string | null;
+  sent_at: string | null;
+  updated_at: string;
+  title: string;
+  company: string | null;
+};
+
+export type JobEmails = {
+  /** The address in the job ad, found by code. */
+  address: string | null;
+  greeting: string;
+  /** "Kind regards," then your name and contact lines. */
+  sign_off: string;
+  /** Your resume's numbered lines, to show what each paragraph cites. */
+  evidence: Evidence[];
+  emails: Email[];
+};
+
+export type EmailInput = {
+  to_address: string | null;
+  subject: string;
+  paragraphs: DraftLine[];
+  dismissed_flags: string[];
 };
 
 export type AnswerSubmission = { question_id: string; answer: string; save: boolean };
@@ -698,3 +740,8 @@ export const bulkApply = (jobIds: string[]) => apiSend<BulkResult>("POST", "/api
 export const moveCard = (jobId: string, stage: Stage) =>
   apiSend<Card>("PUT", `/api/tracker/${encodeURIComponent(jobId)}`, { stage });
 export const removeCard = (jobId: string) => apiSend<void>("DELETE", `/api/tracker/${encodeURIComponent(jobId)}`);
+export const draftEmail = (jobId: string, kind: EmailKind) =>
+  apiSend<Email>("POST", `/api/jobs/${encodeURIComponent(jobId)}/emails`, { kind });
+export const saveEmail = (id: string, input: EmailInput) => apiSend<Email>("PUT", `/api/emails/${id}`, input);
+export const markEmailSent = (id: string) => apiSend<Email>("POST", `/api/emails/${id}/sent`);
+export const skipEmail = (id: string) => apiSend<Email>("POST", `/api/emails/${id}/skip`);

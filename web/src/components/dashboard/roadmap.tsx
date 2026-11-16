@@ -12,7 +12,7 @@ const FEATURES = [
   { name: "Browser apply: form filling and Quick Apply", done: true },
   { name: "Browser apply: logins and email codes", done: true },
   { name: "One-click Apply and tracker", done: true },
-  { name: "Email drafts and follow-ups", done: false },
+  { name: "Email drafts and follow-ups", done: true },
   { name: "Suggestions assistant", done: false },
 ];
 

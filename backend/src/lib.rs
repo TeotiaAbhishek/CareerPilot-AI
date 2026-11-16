@@ -3,6 +3,7 @@ pub mod apply;
 pub mod config;
 pub mod db;
 pub mod documents;
+pub mod emails;
 pub mod error;
 pub mod import;
 pub mod jobs;
@@ -148,6 +149,14 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
                 .delete(tracker::remove),
         )
         .route("/insights", get(tracker::insights))
+        .route(
+            "/jobs/{id}/emails",
+            get(emails::for_job).post(emails::draft_now),
+        )
+        .route("/emails/due", get(emails::due))
+        .route("/emails/{id}", put(emails::save))
+        .route("/emails/{id}/sent", post(emails::mark_sent))
+        .route("/emails/{id}/skip", post(emails::skip))
         .route("/applications", get(apply::list))
         .route("/applications/practice", post(apply::practice))
         .route("/applications/{id}", get(apply::get))

@@ -1,5 +1,5 @@
-//! The drafting worker: takes queued documents one at a time and asks the
-//! local model to write them. Runs next to the scoring worker; both share one
+//! The drafting worker: takes queued documents (then queued emails) one at a
+//! time and asks the local model to write them. Runs next to the scoring worker; both share one
 //! model client, so they take turns on the GPU.
 
 use std::{
@@ -123,7 +123,10 @@ impl Drafter {
         let done = sqlx::query("UPDATE documents SET status = 'queued' WHERE status = 'drafting'")
             .execute(&self.inner.db)
             .await?;
-        Ok(done.rows_affected())
+        let emails = sqlx::query("UPDATE emails SET status = 'queued' WHERE status = 'drafting'")
+            .execute(&self.inner.db)
+            .await?;
+        Ok(done.rows_affected() + emails.rows_affected())
     }
 
     pub fn spawn(&self) {
@@ -155,8 +158,25 @@ impl Drafter {
         .fetch_optional(db)
         .await?;
         let Some(task) = task else {
-            self.update(|s| s.paused_reason = None);
-            return Ok(Step::Idle);
+            // No document waiting: draft an email (F8), if one is due.
+            return Ok(
+                match crate::emails::draft_next(db, &self.inner.llm).await? {
+                    crate::emails::Drafted::Idle => {
+                        self.update(|s| s.paused_reason = None);
+                        Step::Idle
+                    }
+                    crate::emails::Drafted::Ready(id) => {
+                        self.update(|s| s.paused_reason = None);
+                        Step::Drafted(id)
+                    }
+                    crate::emails::Drafted::Failed(id) => Step::Failed(id),
+                    crate::emails::Drafted::Paused(reason) => {
+                        tracing::warn!(%reason, "email drafting paused");
+                        self.update(|s| s.paused_reason = Some(reason.clone()));
+                        Step::Paused(reason)
+                    }
+                },
+            );
         };
 
         self.update(|s| {
