@@ -36,6 +36,9 @@ pub struct Settings {
     pub auto_approve: bool,
     /// Draft a second follow-up 14 days after applying (the first is at 7).
     pub follow_up_second: bool,
+    /// The Ollama model behind the Ask page.
+    pub assistant_model: String,
+    pub assistant_think: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -43,7 +46,7 @@ pub async fn load(db: &PgPool) -> sqlx::Result<Settings> {
     sqlx::query_as(
         "SELECT scoring_enabled, scoring_model, relevance_threshold, drafting_model, drafting_think,
                 apply_parallel, apply_daily_cap, apply_model, apply_think, apply_review,
-                auto_approve, follow_up_second, updated_at
+                auto_approve, follow_up_second, assistant_model, assistant_think, updated_at
          FROM settings",
     )
     .fetch_one(db)
@@ -69,6 +72,8 @@ pub struct SettingsPatch {
     pub apply_review: Option<bool>,
     pub auto_approve: Option<bool>,
     pub follow_up_second: Option<bool>,
+    pub assistant_model: Option<String>,
+    pub assistant_think: Option<bool>,
 }
 
 pub async fn update(
@@ -78,9 +83,11 @@ pub async fn update(
     let model = patch.scoring_model.map(|m| m.trim().to_string());
     let drafting_model = patch.drafting_model.map(|m| m.trim().to_string());
     let apply_model = patch.apply_model.map(|m| m.trim().to_string());
+    let assistant_model = patch.assistant_model.map(|m| m.trim().to_string());
     if model.as_deref().is_some_and(str::is_empty)
         || drafting_model.as_deref().is_some_and(str::is_empty)
         || apply_model.as_deref().is_some_and(str::is_empty)
+        || assistant_model.as_deref().is_some_and(str::is_empty)
     {
         return Err(AppError::BadRequest("Model can't be empty.".into()));
     }
@@ -116,10 +123,13 @@ pub async fn update(
             apply_review = coalesce($10, apply_review),
             auto_approve = coalesce($11, auto_approve),
             follow_up_second = coalesce($12, follow_up_second),
+            assistant_model = coalesce($13, assistant_model),
+            assistant_think = coalesce($14, assistant_think),
             updated_at = now()
          RETURNING scoring_enabled, scoring_model, relevance_threshold, drafting_model,
                    drafting_think, apply_parallel, apply_daily_cap, apply_model, apply_think,
-                   apply_review, auto_approve, follow_up_second, updated_at",
+                   apply_review, auto_approve, follow_up_second, assistant_model,
+                   assistant_think, updated_at",
     )
     .bind(patch.scoring_enabled)
     .bind(model)
@@ -133,6 +143,8 @@ pub async fn update(
     .bind(patch.apply_review)
     .bind(patch.auto_approve)
     .bind(patch.follow_up_second)
+    .bind(assistant_model)
+    .bind(patch.assistant_think)
     .fetch_one(&state.db)
     .await?;
 

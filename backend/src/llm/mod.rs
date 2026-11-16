@@ -2,8 +2,8 @@
 //!
 //! Everything else in the app uses `LlmClient`, never a provider directly.
 //! Today the only provider is a local Ollama. To add another one (OpenAI,
-//! Claude), write `llm/<provider>.rs` with the same two methods as
-//! `OllamaClient` (`chat_json_with` and `models`), add a variant to
+//! Claude), write `llm/<provider>.rs` with the same three methods as
+//! `OllamaClient` (`chat_json_with`, `chat_tools` and `models`), add a variant to
 //! `LlmClient`, and fill in the `match` arms below. Nothing outside this
 //! folder has to change, apart from creating the client in `main.rs`.
 
@@ -20,6 +20,46 @@ pub struct ChatOptions {
     pub think: bool,
     /// Context window for this call. None uses the provider's default.
     pub num_ctx: Option<u32>,
+}
+
+/// A tool the model may call: its name, what it's for, and a JSON schema
+/// for its arguments.
+#[derive(Debug, Clone)]
+pub struct ToolSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub parameters: Value,
+}
+
+/// One message of a conversation with tools.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Message {
+    System(String),
+    User(String),
+    /// What the model said, and the tools it asked for (if any).
+    Assistant {
+        content: String,
+        tool_calls: Vec<ToolCall>,
+    },
+    /// The result of one tool call, sent back to the model.
+    Tool {
+        name: String,
+        content: String,
+    },
+}
+
+/// The model asking to run a tool.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToolCall {
+    pub name: String,
+    pub arguments: Value,
+}
+
+/// One answer from the model: text, tool calls, or both.
+#[derive(Debug, Clone, Default)]
+pub struct Turn {
+    pub content: String,
+    pub tool_calls: Vec<ToolCall>,
 }
 
 /// Why a call failed. The workers treat these differently:
@@ -86,6 +126,22 @@ impl LlmClient {
     ) -> Result<Value, LlmError> {
         match self {
             LlmClient::Ollama(c) => c.chat_json_with(model, system, user, schema, options).await,
+        }
+    }
+
+    /// One step of a conversation where the model may call `tools`.
+    /// The answer's text is passed to `on_text` piece by piece as it arrives,
+    /// so the page can show it while the model is still writing.
+    pub async fn chat_tools(
+        &self,
+        model: &str,
+        messages: &[Message],
+        tools: &[ToolSpec],
+        options: ChatOptions,
+        on_text: &mut (dyn FnMut(&str) + Send),
+    ) -> Result<Turn, LlmError> {
+        match self {
+            LlmClient::Ollama(c) => c.chat_tools(model, messages, tools, options, on_text).await,
         }
     }
 

@@ -157,7 +157,8 @@ pub struct FactsView {
     pub updated_at: DateTime<Utc>,
 }
 
-pub async fn load_facts(db: &PgPool) -> sqlx::Result<Facts> {
+/// Works on the pool or inside a transaction (the assistant reads it read-only).
+pub async fn load_facts(db: impl sqlx::PgExecutor<'_>) -> sqlx::Result<Facts> {
     sqlx::query_as(
         "SELECT full_name, email, phone, linkedin_url, website_url, street_address, postcode,
                 city, state, country, willing_to_relocate, australian_citizen,

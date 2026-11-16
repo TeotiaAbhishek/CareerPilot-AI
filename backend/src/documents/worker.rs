@@ -99,6 +99,11 @@ struct JobRow {
 }
 
 impl Drafter {
+    /// The shared model client (the assistant uses it too, so everyone takes turns on the GPU).
+    pub fn llm(&self) -> &LlmClient {
+        &self.inner.llm
+    }
+
     pub fn new(db: PgPool, llm: LlmClient) -> Self {
         Self {
             inner: Arc::new(Inner {
