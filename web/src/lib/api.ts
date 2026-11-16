@@ -3,7 +3,8 @@
  * Every call goes through `apiGet` / `apiSend`, so errors look the same everywhere.
  */
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+/** Empty: the browser calls /api/... on this web app, which passes it on to the API (next.config.ts). */
+export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "";
 
 export class ApiError extends Error {
   constructor(

@@ -174,7 +174,7 @@ fn vault_init() -> Result<()> {
         .open(".env")?;
     writeln!(
         file,
-        "\n# Password vault key (F4). Back it up somewhere safe. Never commit it."
+        "\n# Password vault key. Back it up somewhere safe. Never commit it."
     )?;
     writeln!(file, "VAULT_KEY={}", VaultKey::generate_base64())?;
     println!("Saved a new VAULT_KEY to backend/.env. Back it up (e.g. in your password manager).");
