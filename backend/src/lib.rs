@@ -1,5 +1,6 @@
 pub mod answers;
 pub mod apply;
+pub mod assistant;
 pub mod config;
 pub mod db;
 pub mod documents;
@@ -157,6 +158,14 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/emails/{id}", put(emails::save))
         .route("/emails/{id}/sent", post(emails::mark_sent))
         .route("/emails/{id}/skip", post(emails::skip))
+        .route("/assistant/chats", get(assistant::list))
+        .route(
+            "/assistant/chats/{id}",
+            get(assistant::get)
+                .put(assistant::rename)
+                .delete(assistant::delete),
+        )
+        .route("/assistant/ask", post(assistant::ask))
         .route("/applications", get(apply::list))
         .route("/applications/practice", post(apply::practice))
         .route("/applications/{id}", get(apply::get))

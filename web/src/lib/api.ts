@@ -173,6 +173,9 @@ export type Settings = {
   apply_review: boolean;
   auto_approve: boolean;
   follow_up_second: boolean;
+  /** The model behind the Ask page. */
+  assistant_model: string;
+  assistant_think: boolean;
   updated_at: string;
 };
 
@@ -745,3 +748,87 @@ export const draftEmail = (jobId: string, kind: EmailKind) =>
 export const saveEmail = (id: string, input: EmailInput) => apiSend<Email>("PUT", `/api/emails/${id}`, input);
 export const markEmailSent = (id: string) => apiSend<Email>("POST", `/api/emails/${id}/sent`);
 export const skipEmail = (id: string) => apiSend<Email>("POST", `/api/emails/${id}/skip`);
+
+// ---------- Ask (the suggestions assistant) ----------
+
+/** One lookup the assistant made, e.g. "Looked at 18 jobs". */
+export type Chip = { tool: string; label: string };
+
+export type Chat = { id: string; title: string; created_at: string; updated_at: string };
+
+export type ChatMessage = {
+  id: number;
+  role: "user" | "assistant";
+  content: string;
+  tools: Chip[];
+  /** The answer didn't work; `content` says why. */
+  failed: boolean;
+  created_at: string;
+};
+
+export type ChatView = Chat & { messages: ChatMessage[] };
+
+/** What the API streams back while it answers, one per line. */
+export type AskEvent =
+  | { type: "start"; chat: Chat; question: ChatMessage }
+  | { type: "tool"; chip: Chip }
+  | { type: "text"; text: string }
+  | { type: "reset" }
+  | { type: "done"; message: ChatMessage }
+  | { type: "error"; message: ChatMessage };
+
+export function renameChat(id: string, title: string) {
+  return apiSend<Chat>("PUT", `/api/assistant/chats/${id}`, { title });
+}
+
+export function deleteChat(id: string) {
+  return apiSend<void>("DELETE", `/api/assistant/chats/${id}`);
+}
+
+/**
+ * Ask a question and call `onEvent` for each line of the streamed answer.
+ * Resolves when the answer is finished (or failed). Leave out `chatId` to
+ * start a new conversation.
+ */
+export async function ask(
+  question: string,
+  chatId: string | null,
+  onEvent: (event: AskEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}/api/assistant/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, chat_id: chatId }),
+      signal,
+    });
+  } catch (e) {
+    if (signal?.aborted) throw e;
+    throw new ApiError("Can't reach the CareerPilot API.", 0);
+  }
+  if (!response.ok || !response.body) {
+    const body = (await response.json().catch(() => null)) as { error?: string } | null;
+    throw new ApiError(body?.error ?? `Request failed (${response.status}).`, response.status);
+  }
+
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let rest = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const parsed = splitLines(rest + value);
+    rest = parsed.rest;
+    parsed.events.forEach(onEvent);
+  }
+  splitLines(`${rest}\n`).events.forEach(onEvent);
+}
+
+/** Whole lines become events; a half-received last line is kept for later. */
+export function splitLines(buffer: string): { events: AskEvent[]; rest: string } {
+  const lines = buffer.split("\n");
+  const rest = lines.pop() ?? "";
+  const events = lines.filter((l) => l.trim() !== "").map((l) => JSON.parse(l) as AskEvent);
+  return { events, rest };
+}
