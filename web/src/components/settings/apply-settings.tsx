@@ -173,6 +173,21 @@ export function ApplySettings() {
                   onCheckedChange={(on) => save({ apply_think: on }, on ? "Thinking on" : "Thinking off")}
                 />
               </div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium">Check answers with a reviewer</p>
+                  <p className="text-sm text-muted-foreground">
+                    A second model call flags answers your resume doesn&apos;t support. Flagged ones get one more try, then
+                    come to you as questions.
+                  </p>
+                </div>
+                <Switch
+                  label="Check answers with a reviewer"
+                  checked={cfg.apply_review}
+                  disabled={busy}
+                  onCheckedChange={(on) => save({ apply_review: on }, on ? "Reviewer on" : "Reviewer off")}
+                />
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -199,6 +214,30 @@ export function ApplySettings() {
                 }
               >
                 <FlaskConical /> Practice run
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy || !s.worker_ok}
+                onClick={() =>
+                  run(async () => {
+                    const practice = await startPractice("careers");
+                    router.push(`/applications/${practice.id}`);
+                  })
+                }
+              >
+                <FlaskConical /> Practice run (careers site with sign-up)
+              </Button>
+              <Button
+                variant="outline"
+                disabled={busy || !s.worker_ok}
+                onClick={() =>
+                  run(async () => {
+                    const practice = await startPractice("code");
+                    router.push(`/applications/${practice.id}`);
+                  })
+                }
+              >
+                <FlaskConical /> Practice run (sign in with an email code)
               </Button>
             </div>
           </>

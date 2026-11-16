@@ -91,7 +91,9 @@ pub struct PromptInput<'a> {
     pub fields: &'a [Field],
 }
 
-pub fn user_prompt(input: &PromptInput<'_>) -> String {
+/// What the model knows: the job ad, your facts, answer bank and resume
+/// evidence. Shared by the answering and the reviewing calls.
+pub fn context(input: &PromptInput<'_>) -> String {
     let mut bank = String::new();
     for a in input.answers.iter().take(40) {
         bank.push_str(&format!("Q: {}\nA: {}\n", a.question, a.answer));
@@ -99,18 +101,6 @@ pub fn user_prompt(input: &PromptInput<'_>) -> String {
     if bank.is_empty() {
         bank.push_str("(empty)\n");
     }
-    let fields: Vec<Value> = input
-        .fields
-        .iter()
-        .map(|f| {
-            let mut v =
-                json!({ "id": f.id, "kind": f.kind, "label": f.label, "required": f.required });
-            if f.kind.is_choice() {
-                v["options"] = json!(f.options);
-            }
-            v
-        })
-        .collect();
     let description: String = input
         .job_description
         .map(str::trim)
@@ -120,15 +110,36 @@ pub fn user_prompt(input: &PromptInput<'_>) -> String {
         .take(DESCRIPTION_CHARS)
         .collect();
     format!(
-        "JOB\nTitle: {}\nCompany: {}\nAd:\n{}\n\nCANDIDATE FACTS\n{}\nANSWER BANK\n{}\nRESUME EVIDENCE\n{}\n\
-         FIELDS TO ANSWER (JSON)\n{}\n\nReturn one answer per field id.",
+        "JOB\nTitle: {}\nCompany: {}\nAd:\n{}\n\nCANDIDATE FACTS\n{}\nANSWER BANK\n{}\nRESUME EVIDENCE\n{}\n",
         input.job_title,
         input.company.unwrap_or("unknown"),
         description,
         facts_for_prompt(input.facts),
         bank,
         input.evidence.trim_end(),
-        serde_json::to_string_pretty(&fields).unwrap_or_default(),
+    )
+}
+
+/// The fields as the model sees them: id, kind, label, required, options.
+pub fn fields_json(fields: &[Field]) -> Vec<Value> {
+    fields
+        .iter()
+        .map(|f| {
+            let mut v =
+                json!({ "id": f.id, "kind": f.kind, "label": f.label, "required": f.required });
+            if f.kind.is_choice() {
+                v["options"] = json!(f.options);
+            }
+            v
+        })
+        .collect()
+}
+
+pub fn user_prompt(input: &PromptInput<'_>) -> String {
+    format!(
+        "{}\nFIELDS TO ANSWER (JSON)\n{}\n\nReturn one answer per field id.",
+        context(input),
+        serde_json::to_string_pretty(&fields_json(input.fields)).unwrap_or_default(),
     )
 }
 

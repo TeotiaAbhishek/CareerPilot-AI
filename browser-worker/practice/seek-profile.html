@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice profile: resumés</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c2330; }
+  header { background: #1c2330; color: #fff; padding: 12px 24px; font-weight: 600; }
+  main { max-width: 640px; margin: 24px auto; background: #fff; border-radius: 12px; padding: 24px 28px; }
+  ul { list-style: none; padding: 0; }
+  li { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid #e5e7eb; }
+  small { color: #6b7280; display: block; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid #c7ccd4; background: #fff; cursor: pointer; }
+  [role=dialog] { position: fixed; inset: 0; background: rgb(0 0 0 / 0.4); display: flex; align-items: center; justify-content: center; }
+  [role=dialog] > div { background: #fff; border-radius: 12px; padding: 20px 24px; }
+  .danger { background: #b42318; border-color: #b42318; color: #fff; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>Practice job board · not a real site</header>
+<main>
+  <!-- Like SEEK's profile page: saved resumés, each with a Delete button
+       that asks you to confirm. Deletions last until the page reloads. -->
+  <h1>Your profile</h1>
+  <h2>Resumés</h2>
+  <ul id="list"></ul>
+  <div role="dialog" aria-modal="true" aria-labelledby="dlg-h" class="hidden" id="dialog">
+    <div>
+      <h3 id="dlg-h">Delete this resumé?</h3>
+      <p id="dlg-name"></p>
+      <button type="button" id="dlg-cancel">Cancel</button>
+      <button type="button" class="danger" id="dlg-ok">Delete</button>
+    </div>
+  </div>
+</main>
+<script>
+  // ?name=Jane%20Citizen names the files after you (CareerPilot passes your name).
+  const who = new URLSearchParams(location.search).get("name") || "Test Person";
+  const files = [
+    ["My own CV 2023.pdf", 400],
+    [`${who} - Resume - Acme Bank.docx`, 30],
+    [`${who} - Resume.pdf`, 20],
+    [`${who} - Resume.pdf`, 10],
+    [`${who} - Resume.pdf`, 5],
+    [`${who} - Resume.pdf`, 0],
+  ];
+  const list = document.getElementById("list");
+  const dialog = document.getElementById("dialog");
+  let pending = null;
+  for (const [name, days] of files) {
+    const li = document.createElement("li");
+    li.innerHTML = `<div><span class="name"></span><small>${days === 0 ? "Added just now" : `Added ${days} days ago`}</small></div><button type="button">Delete</button>`;
+    li.querySelector(".name").textContent = name;
+    li.querySelector("button").addEventListener("click", () => {
+      pending = li;
+      document.getElementById("dlg-name").textContent = name;
+      dialog.classList.remove("hidden");
+    });
+    list.append(li);
+  }
+  document.getElementById("dlg-cancel").addEventListener("click", () => dialog.classList.add("hidden"));
+  document.getElementById("dlg-ok").addEventListener("click", () => {
+    pending?.remove();
+    dialog.classList.add("hidden");
+  });
+</script>
+</body>
+</html>

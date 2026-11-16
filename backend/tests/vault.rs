@@ -145,3 +145,54 @@ async fn a_locked_vault_says_so(db: PgPool) {
     let body: Value = response.json().await.unwrap();
     assert!(body["error"].as_str().unwrap().contains("vault-init"));
 }
+
+#[sqlx::test]
+async fn usual_login_is_stored_encrypted_and_never_returned(db: PgPool) {
+    let base = common::spawn_app(db.clone(), common::NOWHERE).await;
+
+    let empty = get_json(format!("{base}/api/vault/default")).await;
+    assert_eq!(empty["set"], false);
+
+    let response = send(
+        reqwest::Method::PUT,
+        format!("{base}/api/vault/default"),
+        json!({ "username": "", "password": "my usual one" }),
+    )
+    .await;
+    assert_eq!(response.status(), 200);
+    let saved: Value = response.json().await.unwrap();
+    assert_eq!(saved, json!({ "set": true, "username": "" }));
+
+    let secret: Vec<u8> =
+        sqlx::query_scalar("SELECT secret FROM integrations WHERE name = 'default_login'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
+    assert!(!String::from_utf8_lossy(&secret).contains("usual"));
+    assert!(
+        !get_json(format!("{base}/api/vault/default"))
+            .await
+            .to_string()
+            .contains("usual one")
+    );
+
+    let empty_password = send(
+        reqwest::Method::PUT,
+        format!("{base}/api/vault/default"),
+        json!({ "username": "me@example.com", "password": "" }),
+    )
+    .await;
+    assert_eq!(empty_password.status(), 400);
+
+    let deleted = send(
+        reqwest::Method::DELETE,
+        format!("{base}/api/vault/default"),
+        json!({}),
+    )
+    .await;
+    assert_eq!(deleted.status(), 204);
+    assert_eq!(
+        get_json(format!("{base}/api/vault/default")).await["set"],
+        false
+    );
+}

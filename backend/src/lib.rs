@@ -7,6 +7,7 @@ pub mod error;
 pub mod import;
 pub mod jobs;
 pub mod llm;
+pub mod mail;
 pub mod profile;
 pub mod routes;
 pub mod scoring;
@@ -33,6 +34,7 @@ use tower_http::{
 
 use apply::runner::Applier;
 use documents::worker::Drafter;
+use mail::Mail;
 use scoring::Scorer;
 use scraper::seek::SeekClient;
 use vault::crypto::VaultKey;
@@ -55,6 +57,8 @@ pub struct AppState {
     pub applier: Applier,
     /// None when VAULT_KEY isn't set: the vault endpoints then say it's locked.
     pub vault: Option<VaultKey>,
+    /// Email codes for sign-ups (Gmail, read-only).
+    pub mail: Mail,
 }
 
 /// Build the whole HTTP app. Kept separate from `main` so tests can build it too.
@@ -113,6 +117,12 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/vault", get(vault::list).post(vault::create))
         .route("/vault/status", get(vault::status))
         .route("/vault/generate", get(vault::generate))
+        .route(
+            "/vault/default",
+            get(vault::get_default)
+                .put(vault::set_default)
+                .delete(vault::delete_default),
+        )
         .route("/vault/{id}", put(vault::update).delete(vault::delete))
         .route("/vault/{id}/reveal", post(vault::reveal))
         .route(
@@ -124,6 +134,8 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/documents/{id}", get(documents::get).put(documents::save))
         .route("/documents/{id}/approve", post(documents::approve))
         .route("/documents/{id}/docx", get(documents::download_docx))
+        .route("/documents/{id}/pdf", get(documents::pdf::download))
+        .route("/documents/{id}/pdf-check", get(documents::pdf::check))
         .route("/jobs/{id}/apply", post(apply::start))
         .route("/applications", get(apply::list))
         .route("/applications/practice", post(apply::practice))
@@ -135,7 +147,12 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/applications/{id}/cancel", post(apply::cancel))
         .route("/applications/{id}/focus", post(apply::focus))
         .route("/apply/status", get(apply::status))
-        .route("/browser/open", post(apply::open_browser));
+        .route("/browser/open", post(apply::open_browser))
+        .route("/seek/resumes", get(apply::cleanup::scan))
+        .route("/seek/resumes/delete", post(apply::cleanup::delete))
+        .route("/mail", get(mail::status).delete(mail::disconnect))
+        .route("/mail/connect", get(mail::connect))
+        .route("/mail/callback", get(mail::callback));
 
     Router::new()
         .nest("/api", api)

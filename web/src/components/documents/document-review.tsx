@@ -28,12 +28,14 @@ import {
   type JobDetail,
   type JobDocuments,
   type LetterDraft,
+  type PdfCheck,
   type PrepareInput,
   type ResumeDraft,
   apiGet,
   approveDocument,
   docxUrl,
   errorMessage,
+  pdfUrl,
   prepareDocuments,
   saveDocument,
 } from "@/lib/api";
@@ -363,6 +365,7 @@ function Editor({
               <CheckCircle2 className="size-3" aria-hidden /> All lines backed by your resume
             </Badge>
           )}
+          {!dirty ? <PageCount id={document.id} version={document.updated_at} /> : null}
           <span className="text-xs text-muted-foreground">
             {document.model} · {Math.round((document.duration_ms ?? 0) / 1000)} s
             {document.edited ? " · edited" : ""}
@@ -391,14 +394,22 @@ function Editor({
           >
             <Download /> Word
           </a>
+          <a
+            href={dirty ? undefined : pdfUrl(document.id)}
+            aria-disabled={dirty}
+            title={dirty ? "Save first" : "Download the PDF the agent uploads"}
+            className={cn(buttonVariants({ variant: "outline" }), dirty && "pointer-events-none opacity-50")}
+          >
+            <Download /> PDF
+          </a>
           <Link
             href={printHref}
             target="_blank"
             aria-disabled={dirty}
-            title={dirty ? "Save first" : "Open a print view to save as PDF"}
-            className={cn(buttonVariants({ variant: "outline" }), dirty && "pointer-events-none opacity-50")}
+            title={dirty ? "Save first" : "Open a print view"}
+            className={cn(buttonVariants({ variant: "ghost" }), dirty && "pointer-events-none opacity-50")}
           >
-            <Printer /> PDF
+            <Printer /> Print
           </Link>
           <Button variant="ghost" onClick={() => setRegenerating((r) => !r)} aria-expanded={regenerating}>
             <RotateCcw /> Regenerate
@@ -441,5 +452,40 @@ function Editor({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * How many pages the PDF comes to. A resume is fitted to one page: first
+ * smaller, then the oldest bullets are left out, and those are listed here.
+ */
+function PageCount({ id, version }: { id: string; version: string }) {
+  const { data, error } = useApi<PdfCheck>(`/api/documents/${id}/pdf-check?v=${encodeURIComponent(version)}`);
+  if (error) {
+    return (
+      <span className="text-xs text-muted-foreground" title={error}>
+        Page count needs the browser worker
+      </span>
+    );
+  }
+  if (!data) return <Loader2 className="size-3 animate-spin text-muted-foreground" aria-label="Counting pages" />;
+  return (
+    <>
+      <Badge tone={data.pages <= 1 ? "success" : "warning"}>
+        {data.pages} page{data.pages === 1 ? "" : "s"} as PDF
+      </Badge>
+      {data.left_out.length > 0 ? (
+        <details className="basis-full text-xs text-muted-foreground">
+          <summary className="cursor-pointer">
+            {data.left_out.length} line{data.left_out.length === 1 ? "" : "s"} left out of the PDF to fit one page
+          </summary>
+          <ul className="mt-1 list-disc pl-5">
+            {data.left_out.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+    </>
   );
 }

@@ -36,6 +36,7 @@ import {
 import { timeAgo } from "@/lib/format";
 
 import { ConfirmDelete } from "./answers-manager";
+import { UsualLoginCard } from "./usual-login";
 
 /** How long a revealed password stays on screen. */
 const REVEAL_MS = 20_000;
@@ -98,7 +99,7 @@ export function VaultManager() {
           <EmptyState
             icon={KeyRound}
             title="No logins yet"
-            description="Add your SEEK login, and any job sites you use. In F6 the apply agent signs in with these, and saves new accounts it creates."
+            description="Add your SEEK login, and any job sites you use. The apply agent signs in with these, and saves new accounts it creates."
           />
         ) : (
           <ul className="flex flex-col gap-3">
@@ -129,29 +130,32 @@ export function VaultManager() {
         )}
       </div>
 
-      <Card className="h-fit">
-        <CardHeader>
-          <CardTitle>Recent access</CardTitle>
-          <CardDescription>Every reveal, copy and change.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          {status.data.recent_access.length === 0 ? (
-            <p className="text-sm text-muted-foreground">Nothing yet.</p>
-          ) : (
-            <ul className="flex flex-col gap-2 text-sm">
-              {status.data.recent_access.map((a, i) => (
-                <li key={i} className="flex items-center justify-between gap-2">
-                  <span className="truncate">
-                    <span className="capitalize">{a.action.replace("_", " ")}</span>{" "}
-                    <span className="text-muted-foreground">{a.site}</span>
-                  </span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(a.at)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </CardContent>
-      </Card>
+      <div className="flex flex-col gap-6">
+        <UsualLoginCard />
+        <Card className="h-fit">
+          <CardHeader>
+            <CardTitle>Recent access</CardTitle>
+            <CardDescription>Every reveal, copy and change.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            {status.data.recent_access.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nothing yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-2 text-sm">
+                {status.data.recent_access.map((a, i) => (
+                  <li key={i} className="flex items-center justify-between gap-2">
+                    <span className="truncate">
+                      <span className="capitalize">{a.action.replace("_", " ")}</span>{" "}
+                      <span className="text-muted-foreground">{a.site}</span>
+                    </span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{timeAgo(a.at)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

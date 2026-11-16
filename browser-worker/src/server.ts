@@ -2,15 +2,21 @@
 // 127.0.0.1, so nothing else on your network can drive your browser.
 //
 //   GET    /health                    is the worker up?
+//   POST   /pdf              {html, scale?} print a resumé or letter -> {pdf_base64, pages}
 //   POST   /tabs              {url, show?} open a tab (out of sight unless show) -> {tab}
 //   GET    /tabs/:tab                 does the tab still exist? -> {url}
 //   GET    /tabs/:tab/snapshot        read the form          -> Snapshot
 //   POST   /tabs/:tab/fill   {fields} fill fields            -> {results}
 //   POST   /tabs/:tab/upload {id, filename, content_base64}
-//   POST   /tabs/:tab/click  {id}     click Next / Continue (never Submit)
+//   POST   /tabs/:tab/click  {id, auth?} click Next / Continue (never Submit;
+//                                     auth: Sign in / Create account on a login page)
+//   POST   /tabs/:tab/goto   {url}    go to a link (an email's "verify" link)
+//   POST   /tabs/:tab/resumes {prefixes}  saved resumés named like ours -> {resumes}
+//   POST   /tabs/:tab/delete-resume {prefixes, index, name}  delete one of them
 //   POST   /tabs/:tab/focus           open the window on this tab
 //   DELETE /tabs/:tab                 close it
-//   GET    /practice/:name            practice forms (no real site involved)
+//   GET    /practice/:name            practice pages (no real site involved)
+//   GET    /practice/mailbox          emails the practice sites "sent" (POST adds one)
 
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -19,7 +25,15 @@ import type { AddressInfo } from "node:net";
 import { Browser, SubmitBlocked, TabNotFound, message, type BrowserOptions } from "./browser.ts";
 
 const MAX_BODY = 10 * 1024 * 1024;
-const PRACTICE = new Set(["quick-apply", "employer-form", "captcha"]);
+const PRACTICE = new Set(["quick-apply", "employer-form", "captcha", "careers-login", "careers-code", "seek-profile"]);
+
+/** Emails "sent" by the practice careers site, so practice runs need no real inbox. */
+interface PracticeEmail {
+  from: string;
+  subject: string;
+  body: string;
+  at: string;
+}
 
 export interface Worker {
   url: string;
@@ -41,9 +55,10 @@ export async function startServer(
   host = "127.0.0.1",
 ): Promise<Worker> {
   const browser = new Browser(options);
+  const mailbox: PracticeEmail[] = [];
 
   const server = createServer((req, res) => {
-    handle(browser, req, res).catch((error: unknown) => {
+    handle(browser, mailbox, req, res).catch((error: unknown) => {
       const status =
         error instanceof HttpError
           ? error.status
@@ -75,7 +90,12 @@ export async function startServer(
   };
 }
 
-async function handle(browser: Browser, req: IncomingMessage, res: ServerResponse) {
+async function handle(
+  browser: Browser,
+  mailbox: PracticeEmail[],
+  req: IncomingMessage,
+  res: ServerResponse,
+) {
   const url = new URL(req.url ?? "/", "http://localhost");
   const parts = url.pathname.split("/").filter(Boolean);
   const method = req.method ?? "GET";
@@ -84,11 +104,33 @@ async function handle(browser: Browser, req: IncomingMessage, res: ServerRespons
     return send(res, 200, { ok: true, headless: browser.headless, tabs: browser.openTabs });
   }
 
+  if (url.pathname === "/practice/mailbox") {
+    if (method === "POST") {
+      const email = await body<Partial<PracticeEmail>>(req);
+      mailbox.push({
+        from: String(email.from ?? "careers@practice.test"),
+        subject: String(email.subject ?? ""),
+        body: String(email.body ?? ""),
+        at: new Date().toISOString(),
+      });
+      if (mailbox.length > 20) mailbox.shift();
+      return send(res, 201, { ok: true });
+    }
+    return send(res, 200, { emails: mailbox });
+  }
+
   if (method === "GET" && parts[0] === "practice" && parts.length === 2) {
     if (!PRACTICE.has(parts[1])) throw new HttpError(404, "No such practice form.");
     const html = await readFile(new URL(`../practice/${parts[1]}.html`, import.meta.url));
     res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
     return res.end(html);
+  }
+
+  if (method === "POST" && url.pathname === "/pdf") {
+    const { html, scale } = await body<{ html?: string; scale?: number }>(req);
+    if (!html) throw new HttpError(400, "html is needed");
+    const { pdf, pages } = await browser.pdf(html, scale ?? 1);
+    return send(res, 200, { pdf_base64: pdf.toString("base64"), pages });
   }
 
   if (parts[0] !== "tabs") throw new HttpError(404, "Not found.");
@@ -132,13 +174,29 @@ async function handle(browser: Browser, req: IncomingMessage, res: ServerRespons
       return send(res, 200, { ok: true });
     }
     case "click": {
-      const { id } = await body<{ id?: string }>(req);
+      const { id, auth } = await body<{ id?: string; auth?: boolean }>(req);
       if (!id) throw new HttpError(400, "id is needed");
-      return send(res, 200, { ok: true, url: await browser.click(tab, id) });
+      return send(res, 200, { ok: true, url: await browser.click(tab, id, auth === true) });
     }
-    case "focus":
-      await browser.focus(tab);
-      return send(res, 200, { ok: true });
+    case "goto": {
+      const { url: target } = await body<{ url?: string }>(req);
+      if (!target || !/^https?:\/\//.test(target)) throw new HttpError(400, "url must start with http(s)://");
+      return send(res, 200, { ok: true, url: await browser.goto(tab, target) });
+    }
+    case "resumes": {
+      const { prefixes } = await body<{ prefixes?: string[] }>(req);
+      if (!Array.isArray(prefixes) || prefixes.length === 0) throw new HttpError(400, "prefixes must be a list");
+      return send(res, 200, { resumes: await browser.savedResumes(tab, prefixes) });
+    }
+    case "delete-resume": {
+      const input = await body<{ prefixes?: string[]; index?: number; name?: string }>(req);
+      if (!Array.isArray(input.prefixes) || typeof input.index !== "number" || !input.name) {
+        throw new HttpError(400, "prefixes, index and name are needed");
+      }
+      return send(res, 200, {
+        deleted: await browser.deleteResume(tab, input.prefixes, input.index, input.name),
+      });
+    }
     default:
       throw new HttpError(404, "Not found.");
   }

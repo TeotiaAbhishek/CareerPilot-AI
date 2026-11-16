@@ -5,6 +5,8 @@
 pub mod check;
 pub mod docx;
 pub mod draft;
+pub mod html;
+pub mod pdf;
 pub mod prompt;
 pub mod resume;
 pub mod worker;
@@ -106,7 +108,7 @@ pub struct DocumentView {
     pub previous_drafts: i64,
 }
 
-async fn load(db: &PgPool, id: Uuid) -> AppResult<Document> {
+pub(crate) async fn load(db: &PgPool, id: Uuid) -> AppResult<Document> {
     sqlx::query_as(select_documents!("WHERE d.id = $1"))
         .bind(id)
         .fetch_optional(db)
@@ -504,17 +506,15 @@ pub async fn docx_file(db: &PgPool, id: Uuid) -> AppResult<(String, Vec<u8>)> {
             (docx::letter_docx(&draft, &date)?, draft.name)
         }
     };
-    Ok((
-        file_name(&name, document.kind, document.company.as_deref()),
-        bytes,
-    ))
+    Ok((file_name(&name, document.kind, "docx"), bytes))
 }
 
-/// "Jane Citizen - Resume - Acme Bank.docx", ASCII only so every browser and OS accepts it.
-pub fn file_name(name: &str, kind: Kind, company: Option<&str>) -> String {
-    let parts: Vec<&str> = [Some(name), Some(kind.label()), company]
+/// "Jane Citizen - Resume.pdf", ASCII only so every browser and OS accepts
+/// it. No company in the name: the agent tells copies apart by when they
+/// were added, and employers just see a clean file name.
+pub fn file_name(name: &str, kind: Kind, extension: &str) -> String {
+    let parts: Vec<&str> = [name, kind.label()]
         .into_iter()
-        .flatten()
         .filter(|p| !p.trim().is_empty())
         .collect();
     let safe: String = parts
@@ -529,7 +529,10 @@ pub fn file_name(name: &str, kind: Kind, company: Option<&str>) -> String {
         })
         .collect();
     let safe = safe.split_whitespace().collect::<Vec<_>>().join(" ");
-    format!("{}.docx", if safe.is_empty() { "Document" } else { &safe })
+    format!(
+        "{}.{extension}",
+        if safe.is_empty() { "Document" } else { &safe }
+    )
 }
 
 #[cfg(test)]
@@ -539,9 +542,12 @@ mod tests {
     #[test]
     fn file_names_are_safe() {
         assert_eq!(
-            file_name("Jane Citizen", Kind::Resume, Some("Acme / Bank™")),
-            "Jane Citizen - Resume - Acme Bank.docx"
+            file_name("Jane Citizen™", Kind::Resume, "pdf"),
+            "Jane Citizen - Resume.pdf"
         );
-        assert_eq!(file_name("", Kind::CoverLetter, None), "Cover letter.docx");
+        assert_eq!(
+            file_name("", Kind::CoverLetter, "docx"),
+            "Cover letter.docx"
+        );
     }
 }

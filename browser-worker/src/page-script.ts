@@ -230,13 +230,18 @@ export function readPage(): PageSnapshot {
     fields.push({ id, kind: "file", label: label || text, required: false, options: [], value: "" });
   }
 
+  // Links that act like buttons on login pages: "Create account", "Sign in".
+  const authLink = /^(create (an |your )?account|sign ?up|register|sign ?in|log ?in|new user)\b/i;
   const buttons: PageSnapshot["buttons"] = [];
   for (const el of Array.from(
     document.querySelectorAll<HTMLElement>(
-      'button, input[type="submit"], input[type="button"], a[role="button"]',
+      'button, input[type="submit"], input[type="button"], a[role="button"], a[href]',
     ),
   )) {
     if (!isVisible(el) || (el as HTMLButtonElement).disabled || uploadButtons.has(el)) continue;
+    if (el.tagName === "A" && el.getAttribute("role") !== "button" && !authLink.test(clean(el.innerText))) {
+      continue;
+    }
     const text = clean(
       el.innerText || (el as HTMLInputElement).value || el.getAttribute("aria-label"),
     );
@@ -267,7 +272,15 @@ export function readPage(): PageSnapshot {
       (e) => e.getAttribute("data-size") !== "invisible" && bigEnough(e),
     );
 
-  const password = Array.from(document.querySelectorAll('input[type="password"]')).some(isVisible);
+  const passwordBoxes = Array.from(
+    document.querySelectorAll<HTMLInputElement>('input[type="password"]'),
+  ).filter((el) => isVisible(el) && !el.disabled);
+  const password = passwordBoxes.length > 0;
+  const secrets = passwordBoxes.map((el) => {
+    const id = el.dataset.cp || nextId("f");
+    el.dataset.cp = id;
+    return id;
+  });
 
   const headings = Array.from(document.querySelectorAll("h1, h2, h3"))
     .filter(isVisible)
@@ -284,5 +297,7 @@ export function readPage(): PageSnapshot {
     errors,
     captcha,
     password,
+    secrets,
+    text: (document.body?.innerText ?? "").replace(/\s+/g, " ").trim().slice(0, 2000),
   };
 }

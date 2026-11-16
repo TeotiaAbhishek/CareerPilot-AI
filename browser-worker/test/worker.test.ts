@@ -190,3 +190,110 @@ describe("captcha", () => {
     expect(res.data.code).toBe("tab_not_found");
   });
 });
+
+describe("careers site with a login", () => {
+  it("signs up, reads the emailed code, and still never clicks Submit", async () => {
+    const tab = (
+      await call<{ tab: string }>("POST", "/tabs", { url: `${worker.url}/practice/careers-login?reset=1` })
+    ).data.tab;
+    let snap = await snapshot(tab);
+    expect(snap.secrets).toHaveLength(1); // the sign-in password box
+    expect(snap.text).toMatch(/sign in/i);
+    await call("POST", `/tabs/${tab}/click`, { id: button(snap, /create an account/i).id });
+
+    snap = await snapshot(tab);
+    expect(snap.secrets).toHaveLength(2); // password and confirm
+    const [password, confirm] = snap.secrets;
+    await call("POST", `/tabs/${tab}/fill`, {
+      fields: [
+        { id: field(snap, /^First name/).id, value: "Test" },
+        { id: field(snap, /^Last name/).id, value: "Person" },
+        { id: field(snap, /^Email/).id, value: "test@example.com" },
+        { id: password, value: "Practice-Pass-123" },
+        { id: confirm, value: "Practice-Pass-123" },
+        { id: field(snap, /Terms of Use/).id, value: "Yes" },
+      ],
+    });
+    const created = await call("POST", `/tabs/${tab}/click`, { id: button(snap, /^create account/i).id, auth: true });
+    expect(created.status).toBe(200);
+
+    const mail = await call<{ emails: { body: string }[] }>("GET", "/practice/mailbox");
+    const code = /\b(\d{6})\b/.exec(mail.data.emails.at(-1)!.body)![1];
+    snap = await snapshot(tab);
+    await call("POST", `/tabs/${tab}/fill`, { fields: [{ id: field(snap, /Verification code/).id, value: code }] });
+    await call("POST", `/tabs/${tab}/click`, { id: button(snap, /verify/i).id, auth: true });
+
+    snap = await snapshot(tab);
+    expect(field(snap, /Why do you want/).kind).toBe("textarea");
+    // No password or code box on the form, so "auth" doesn't unlock Submit.
+    const blocked = await call("POST", `/tabs/${tab}/click`, { id: button(snap, /submit application/i).id, auth: true });
+    expect(blocked.status).toBe(409);
+    await call("DELETE", `/tabs/${tab}`);
+  });
+});
+
+describe("careers site with email-code sign-in", () => {
+  it("lets the agent send the email-only sign-in, then the code", async () => {
+    const tab = await open("careers-code");
+    let snap = await snapshot(tab);
+    expect(snap.secrets).toHaveLength(0);
+    await call("POST", `/tabs/${tab}/fill`, { fields: [{ id: field(snap, /^Email/).id, value: "test@example.com" }] });
+    const sent = await call("POST", `/tabs/${tab}/click`, { id: button(snap, /email me/i).id, auth: true });
+    expect(sent.status).toBe(200);
+
+    const mail = await call<{ emails: { body: string }[] }>("GET", "/practice/mailbox");
+    const code = /\b(\d{6})\b/.exec(mail.data.emails.at(-1)!.body)![1];
+    snap = await snapshot(tab);
+    await call("POST", `/tabs/${tab}/fill`, { fields: [{ id: field(snap, /Sign-in code/).id, value: code }] });
+    await call("POST", `/tabs/${tab}/click`, { id: button(snap, /^sign in/i).id, auth: true });
+
+    snap = await snapshot(tab);
+    expect(field(snap, /Why do you want/).kind).toBe("textarea");
+    const blocked = await call("POST", `/tabs/${tab}/click`, { id: button(snap, /submit application/i).id, auth: true });
+    expect(blocked.status).toBe(409);
+    await call("DELETE", `/tabs/${tab}`);
+  });
+});
+
+describe("saved resumes", () => {
+  it("lists only ours and deletes the one asked for, confirming in the dialog", async () => {
+    const tab = await open("seek-profile");
+    const prefixes = ["Test Person - Resume"];
+    const list = async () =>
+      (await call<{ resumes: { index: number; name: string; added: string }[] }>("POST", `/tabs/${tab}/resumes`, { prefixes }))
+        .data.resumes;
+    const before = await list();
+    expect(before.map((r) => r.name)).not.toContain("My own CV 2023.pdf");
+    expect(before.length).toBe(5);
+    const oldest = before.find((r) => /20 days/.test(r.added))!;
+
+    const wrong = await call<{ deleted: boolean }>("POST", `/tabs/${tab}/delete-resume`, {
+      prefixes,
+      index: oldest.index,
+      name: "Someone else.pdf",
+    });
+    expect(wrong.data.deleted).toBe(false);
+
+    const res = await call<{ deleted: boolean }>("POST", `/tabs/${tab}/delete-resume`, {
+      prefixes,
+      index: oldest.index,
+      name: oldest.name,
+    });
+    expect(res.data.deleted).toBe(true);
+    const after = await list();
+    expect(after.length).toBe(4);
+    expect(after.some((r) => /20 days/.test(r.added))).toBe(false);
+    await call("DELETE", `/tabs/${tab}`);
+  });
+});
+
+describe("pdf", () => {
+  it("prints HTML and counts the pages", async () => {
+    const one = await call<{ pdf_base64: string; pages: number }>("POST", "/pdf", { html: "<h1>One page</h1>" });
+    expect(one.data.pages).toBe(1);
+    expect(Buffer.from(one.data.pdf_base64, "base64").subarray(0, 4).toString()).toBe("%PDF");
+    const long = "<p>line</p>".repeat(200);
+    const two = await call<{ pages: number }>("POST", "/pdf", { html: long, scale: 1 });
+    expect(two.data.pages).toBeGreaterThan(1);
+  });
+});

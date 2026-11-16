@@ -294,6 +294,216 @@ async fn fetch(state: &AppState, id: Uuid) -> AppResult<Credential> {
 const CREDENTIAL_BY_ID: &str = "SELECT id, site, login_url, username, notes, created_by,
     last_used_at, created_at, updated_at FROM credentials WHERE id = $1";
 
+// ---------- The apply agent's side ----------
+
+/// A login the agent can use. Debug never prints the password.
+pub struct AgentLogin {
+    pub username: String,
+    pub password: String,
+}
+
+impl std::fmt::Debug for AgentLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "AgentLogin({}, ..)", self.username)
+    }
+}
+
+/// Your saved login for a site (a domain like "acme.wd3.myworkdayjobs.com"),
+/// if there is one. Each use is recorded in the access log.
+pub async fn agent_login(
+    db: &sqlx::PgPool,
+    key: &VaultKey,
+    site: &str,
+) -> anyhow::Result<Option<AgentLogin>> {
+    let row: Option<(Uuid, String, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+        "UPDATE credentials SET last_used_at = now() WHERE site = $1
+         RETURNING id, username, secret, nonce",
+    )
+    .bind(site)
+    .fetch_optional(db)
+    .await?;
+    let Some((id, username, secret, nonce)) = row else {
+        return Ok(None);
+    };
+    let password = key.decrypt(&secret, &nonce, id.as_bytes())?;
+    sqlx::query(
+        "INSERT INTO vault_access_log (credential_id, site, action) VALUES ($1, $2, 'agent_use')",
+    )
+    .bind(id)
+    .bind(site)
+    .execute(db)
+    .await?;
+    Ok(Some(AgentLogin { username, password }))
+}
+
+/// Save a login the agent created when it signed up for you. Replaces an
+/// older one the agent made for the same site (a sign-up that had to be
+/// redone), never one you saved yourself.
+pub async fn save_agent_login(
+    db: &sqlx::PgPool,
+    key: &VaultKey,
+    site: &str,
+    login_url: &str,
+    username: &str,
+    password: &str,
+) -> anyhow::Result<()> {
+    let id = Uuid::new_v4();
+    let sealed = key.encrypt(password, id.as_bytes())?;
+    sqlx::query("DELETE FROM credentials WHERE site = $1 AND created_by = 'agent'")
+        .bind(site)
+        .execute(db)
+        .await?;
+    sqlx::query(
+        "INSERT INTO credentials (id, site, login_url, username, secret, nonce, notes, created_by)
+         VALUES ($1, $2, $3, $4, $5, $6, 'Created by the apply agent.', 'agent')",
+    )
+    .bind(id)
+    .bind(site)
+    .bind(login_url)
+    .bind(username)
+    .bind(&sealed.ciphertext)
+    .bind(&sealed.nonce)
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "INSERT INTO vault_access_log (credential_id, site, action) VALUES ($1, $2, 'create')",
+    )
+    .bind(id)
+    .bind(site)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Your usual login: the email and password you use on most sites. When a
+/// site has no saved login, the agent tries this once before offering to
+/// create an account, and saves it for the site if it works. Stored in
+/// `integrations`, encrypted like every other password.
+const DEFAULT_AAD: &[u8] = b"integration:default_login";
+
+pub async fn default_login(
+    db: &sqlx::PgPool,
+    key: &VaultKey,
+) -> anyhow::Result<Option<AgentLogin>> {
+    let row: Option<(String, Vec<u8>, Vec<u8>)> = sqlx::query_as(
+        "SELECT account, secret, nonce FROM integrations WHERE name = 'default_login'",
+    )
+    .fetch_optional(db)
+    .await?;
+    let Some((username, secret, nonce)) = row else {
+        return Ok(None);
+    };
+    let password = key.decrypt(&secret, &nonce, DEFAULT_AAD)?;
+    Ok(Some(AgentLogin { username, password }))
+}
+
+#[derive(Serialize)]
+pub struct DefaultLoginView {
+    pub set: bool,
+    /// Empty: your profile email.
+    pub username: String,
+}
+
+pub async fn get_default(State(state): State<AppState>) -> AppResult<Json<DefaultLoginView>> {
+    let username: Option<String> =
+        sqlx::query_scalar("SELECT account FROM integrations WHERE name = 'default_login'")
+            .fetch_optional(&state.db)
+            .await?;
+    Ok(Json(DefaultLoginView {
+        set: username.is_some(),
+        username: username.unwrap_or_default(),
+    }))
+}
+
+#[derive(Deserialize)]
+pub struct DefaultLoginInput {
+    #[serde(default)]
+    username: String,
+    password: String,
+}
+
+pub async fn set_default(
+    State(state): State<AppState>,
+    Json(input): Json<DefaultLoginInput>,
+) -> AppResult<Json<DefaultLoginView>> {
+    let key = key(&state)?;
+    let username = input.username.trim().to_string();
+    if input.password.is_empty() || input.password.len() > 200 || username.len() > 200 {
+        return Err(AppError::BadRequest(
+            "Enter the password (at most 200 characters).".into(),
+        ));
+    }
+    let sealed = key.encrypt(&input.password, DEFAULT_AAD)?;
+    sqlx::query(
+        "INSERT INTO integrations (name, account, secret, nonce) VALUES ('default_login', $1, $2, $3)
+         ON CONFLICT (name) DO UPDATE SET account = EXCLUDED.account, secret = EXCLUDED.secret,
+             nonce = EXCLUDED.nonce, updated_at = now()",
+    )
+    .bind(&username)
+    .bind(&sealed.ciphertext)
+    .bind(&sealed.nonce)
+    .execute(&state.db)
+    .await?;
+    Ok(Json(DefaultLoginView {
+        set: true,
+        username,
+    }))
+}
+
+pub async fn delete_default(State(state): State<AppState>) -> AppResult<StatusCode> {
+    sqlx::query("DELETE FROM integrations WHERE name = 'default_login'")
+        .execute(&state.db)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The username saved for a site, without touching the password.
+pub async fn saved_username(db: &sqlx::PgPool, site: &str) -> sqlx::Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT username FROM credentials WHERE site = $1 ORDER BY created_at LIMIT 1",
+    )
+    .bind(site)
+    .fetch_optional(db)
+    .await
+}
+
+/// Save your usual login for a site once it worked there, so next time it's
+/// a saved login like any other (marked as yours, not the agent's).
+pub async fn save_login_for_site(
+    db: &sqlx::PgPool,
+    key: &VaultKey,
+    site: &str,
+    login_url: &str,
+    username: &str,
+    password: &str,
+) -> anyhow::Result<()> {
+    let id = Uuid::new_v4();
+    let sealed = key.encrypt(password, id.as_bytes())?;
+    let inserted = sqlx::query(
+        "INSERT INTO credentials (id, site, login_url, username, secret, nonce, notes, created_by)
+         SELECT $1, $2, $3, $4, $5, $6, 'Your usual login: it worked here, so the agent saved it.', 'you'
+         WHERE NOT EXISTS (SELECT 1 FROM credentials WHERE site = $2)",
+    )
+    .bind(id)
+    .bind(site)
+    .bind(login_url)
+    .bind(username)
+    .bind(&sealed.ciphertext)
+    .bind(&sealed.nonce)
+    .execute(db)
+    .await?;
+    if inserted.rows_affected() > 0 {
+        sqlx::query(
+            "INSERT INTO vault_access_log (credential_id, site, action) VALUES ($1, $2, 'create')",
+        )
+        .bind(id)
+        .bind(site)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

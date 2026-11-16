@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice Careers: sign in with an email code</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c2330; }
+  header { background: #0f5132; color: #fff; padding: 12px 24px; font-weight: 600; }
+  main { max-width: 520px; margin: 24px auto; background: #fff; border-radius: 12px; padding: 24px 28px; }
+  .row { margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  label.opt { font-weight: 400; }
+  input[type=text], input[type=email], input[type=password], input[type=tel], textarea {
+    width: 100%; padding: 8px; border: 1px solid #c7ccd4; border-radius: 6px; font: inherit; box-sizing: border-box;
+  }
+  button { font: inherit; padding: 10px 18px; border-radius: 6px; border: 0; background: #198754; color: #fff; cursor: pointer; }
+  [role=alert] { color: #b42318; margin: 12px 0; }
+  .hidden { display: none; }
+  .small { color: #6b7280; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>Practice Careers · not a real site</header>
+<main>
+  <!-- Like careers sites with no passwords: type your email, they email you
+       a code, type the code, then apply. Any email works. -->
+  <section id="email">
+    <h1>Sign in</h1>
+    <form id="email-form" novalidate>
+      <div class="row"><label for="em-email">Email address</label><input type="email" id="em-email" autocomplete="email"></div>
+      <div role="alert" id="em-error"></div>
+      <button type="submit">Email me a sign-in code</button>
+    </form>
+  </section>
+
+  <section id="code" class="hidden">
+    <h1>Check your email</h1>
+    <p>We've emailed a 6-digit code to <strong id="cd-to"></strong>.</p>
+    <form id="code-form" novalidate>
+      <div class="row"><label for="cd-code">Sign-in code</label><input type="text" id="cd-code" inputmode="numeric" autocomplete="one-time-code"></div>
+      <div role="alert" id="cd-error"></div>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <section id="apply" class="hidden">
+    <h1>Apply: Data Analyst</h1>
+    <p class="small">Signed in as <span id="ap-who"></span></p>
+    <form id="apply-form" novalidate>
+      <div class="row"><label for="ap-phone">Mobile phone *</label><input type="tel" id="ap-phone" required></div>
+      <div class="row"><label for="ap-why">Why do you want to work with us? *</label><textarea id="ap-why" rows="4" required></textarea></div>
+      <div role="alert" id="ap-error"></div>
+      <button type="submit">Submit application</button>
+    </form>
+  </section>
+
+  <section id="done" class="hidden"><h1>Application sent</h1><p>It's a practice site, so nothing was sent anywhere.</p></section>
+</main>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let email = "";
+  let code = "";
+  const show = (view) => {
+    for (const s of document.querySelectorAll("main > section")) s.classList.toggle("hidden", s.id !== view);
+  };
+
+  $("email-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    email = $("em-email").value.trim();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      $("em-error").textContent = "Enter a valid email address.";
+      return;
+    }
+    code = String(Math.floor(100000 + Math.random() * 900000));
+    await fetch("/practice/mailbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "no-reply@practice-careers.test",
+        subject: "Your Practice Careers sign-in code",
+        body: `Your sign-in code is ${code}. It expires in 10 minutes.`,
+      }),
+    });
+    $("cd-to").textContent = email;
+    show("code");
+  });
+
+  $("code-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if ($("cd-code").value.trim() !== code) {
+      $("cd-error").textContent = "That code isn't right.";
+      return;
+    }
+    $("ap-who").textContent = email;
+    show("apply");
+  });
+
+  $("apply-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!$("ap-phone").value.trim() || !$("ap-why").value.trim()) {
+      $("ap-error").textContent = "Please answer every question.";
+      return;
+    }
+    show("done");
+  });
+</script>
+</body>
+</html>

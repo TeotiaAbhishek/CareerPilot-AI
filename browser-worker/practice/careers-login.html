@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice Careers: sign in to apply</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #1c2330; }
+  header { background: #0f5132; color: #fff; padding: 12px 24px; font-weight: 600; }
+  main { max-width: 520px; margin: 24px auto; background: #fff; border-radius: 12px; padding: 24px 28px; }
+  .row { margin-bottom: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  label.opt { font-weight: 400; }
+  input[type=text], input[type=email], input[type=password], input[type=tel], textarea {
+    width: 100%; padding: 8px; border: 1px solid #c7ccd4; border-radius: 6px; font: inherit; box-sizing: border-box;
+  }
+  button { font: inherit; padding: 10px 18px; border-radius: 6px; border: 0; background: #198754; color: #fff; cursor: pointer; }
+  [role=alert] { color: #b42318; margin: 12px 0; }
+  .hidden { display: none; }
+  .small { color: #6b7280; font-size: 13px; }
+</style>
+</head>
+<body>
+<header>Practice Careers · not a real site</header>
+<main>
+  <!-- Like many employer careers sites (Workday and others): sign in, or
+       create an account, verify your email with a code, then apply.
+       Add ?reset=1 to the address to forget the practice account. -->
+
+  <section id="signin" class="hidden">
+    <h1>Sign in to apply</h1>
+    <form id="signin-form" novalidate>
+      <div class="row"><label for="si-email">Email address</label><input type="email" id="si-email" autocomplete="username"></div>
+      <div class="row"><label for="si-password">Password</label><input type="password" id="si-password" autocomplete="current-password"></div>
+      <div role="alert" id="si-error"></div>
+      <button type="submit">Sign in</button>
+    </form>
+    <p class="small">New here? <a href="#create" id="to-create">Create an account</a></p>
+  </section>
+
+  <section id="create" class="hidden">
+    <h1>Create your account</h1>
+    <form id="create-form" novalidate>
+      <div class="row"><label for="cr-first">First name *</label><input type="text" id="cr-first" required></div>
+      <div class="row"><label for="cr-last">Last name *</label><input type="text" id="cr-last" required></div>
+      <div class="row"><label for="cr-email">Email address *</label><input type="email" id="cr-email" required></div>
+      <div class="row"><label for="cr-password">Password *</label><input type="password" id="cr-password" required autocomplete="new-password"></div>
+      <div class="row"><label for="cr-confirm">Confirm password *</label><input type="password" id="cr-confirm" required autocomplete="new-password"></div>
+      <div class="row"><label class="opt"><input type="checkbox" id="cr-terms" required> I agree to the Terms of Use and Privacy Policy *</label></div>
+      <div role="alert" id="cr-error"></div>
+      <button type="submit">Create account</button>
+    </form>
+  </section>
+
+  <section id="verify" class="hidden">
+    <h1>Verify your email</h1>
+    <p>We've emailed a 6-digit code to <strong id="vf-to"></strong>.</p>
+    <form id="verify-form" novalidate>
+      <div class="row"><label for="vf-code">Verification code</label><input type="text" id="vf-code" inputmode="numeric" autocomplete="one-time-code"></div>
+      <div role="alert" id="vf-error"></div>
+      <button type="submit">Verify</button>
+    </form>
+  </section>
+
+  <section id="apply" class="hidden">
+    <h1>Data Analyst at Practice Careers</h1>
+    <p class="small">Signed in as <span id="ap-who"></span></p>
+    <form id="apply-form" novalidate>
+      <div class="row"><label for="ap-phone">Mobile phone *</label><input type="tel" id="ap-phone" required></div>
+      <div class="row"><label for="ap-why">Why do you want to work with us? *</label><textarea id="ap-why" rows="4" required></textarea></div>
+      <div role="alert" id="ap-error"></div>
+      <button type="submit">Submit application</button>
+    </form>
+  </section>
+
+  <section id="done" class="hidden"><h1>Application sent</h1><p>It's a practice site, so nothing was sent anywhere.</p></section>
+</main>
+<script>
+  const KEY = "cp-practice-careers";
+  if (new URLSearchParams(location.search).has("reset")) localStorage.removeItem(KEY);
+  const account = () => JSON.parse(localStorage.getItem(KEY) || "null");
+  const save = (a) => localStorage.setItem(KEY, JSON.stringify(a));
+  const $ = (id) => document.getElementById(id);
+  let signedIn = false;
+
+  function show(view) {
+    for (const s of document.querySelectorAll("main > section")) s.classList.toggle("hidden", s.id !== view);
+  }
+  function route() {
+    const a = account();
+    if (signedIn) return show("apply");
+    if (location.hash === "#create") return show("create");
+    if (a && !a.verified) return show("verify");
+    show("signin");
+  }
+  window.addEventListener("hashchange", route);
+
+  $("signin-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const a = account();
+    if (!a || a.email !== $("si-email").value.trim() || a.password !== $("si-password").value) {
+      $("si-error").textContent = "Email address or password is incorrect.";
+      return;
+    }
+    signedIn = true;
+    $("ap-who").textContent = a.email;
+    route();
+  });
+
+  $("create-form").addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const required = ["cr-first", "cr-last", "cr-email", "cr-password", "cr-confirm"];
+    if (required.some((id) => !$(id).value.trim()) || !$("cr-terms").checked) {
+      $("cr-error").textContent = "Please fill in every field and accept the terms.";
+      return;
+    }
+    if ($("cr-password").value.length < 8) {
+      $("cr-error").textContent = "Password must be at least 8 characters.";
+      return;
+    }
+    if ($("cr-password").value !== $("cr-confirm").value) {
+      $("cr-error").textContent = "Passwords don't match.";
+      return;
+    }
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    save({ email: $("cr-email").value.trim(), password: $("cr-password").value, code, verified: false });
+    await fetch("/practice/mailbox", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: "no-reply@practice-careers.test",
+        subject: "Your Practice Careers verification code",
+        body: `Hi, your verification code is ${code}. It expires in 10 minutes.`,
+      }),
+    });
+    $("vf-to").textContent = account().email;
+    history.replaceState(null, "", location.pathname);
+    route();
+  });
+
+  $("verify-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const a = account();
+    if (!a || $("vf-code").value.trim() !== a.code) {
+      $("vf-error").textContent = "That code isn't right.";
+      return;
+    }
+    save({ ...a, verified: true });
+    signedIn = true;
+    $("ap-who").textContent = a.email;
+    route();
+  });
+
+  $("apply-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!$("ap-phone").value.trim() || !$("ap-why").value.trim()) {
+      $("ap-error").textContent = "Please answer every question.";
+      return;
+    }
+    show("done");
+  });
+
+  if (account() && !account().verified) $("vf-to").textContent = account().email;
+  route();
+</script>
+</body>
+</html>

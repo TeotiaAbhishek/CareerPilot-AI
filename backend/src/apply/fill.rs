@@ -94,7 +94,9 @@ pub fn plan(fields: &[Field], ctx: &FillContext<'_>) -> Plan {
     let mut plan = Plan::default();
 
     // SEEK lists the resumés saved on your profile as options, with an
-    // Upload button beside them. Once ours is in that list, pick it.
+    // Upload button beside them. Once ours is in that list, pick it. Only
+    // after uploading it in this run, though: every CareerPilot resumé has
+    // the same name, so an older copy in the list may be another job's.
     let mut listed: Vec<Doc> = Vec::new();
     let mut handled: Vec<&str> = Vec::new();
     for (doc, file) in [
@@ -102,8 +104,18 @@ pub fn plan(fields: &[Field], ctx: &FillContext<'_>) -> Plan {
         (Doc::CoverLetter, ctx.cover_letter_file),
     ] {
         let Some(file) = file else { continue };
+        if !ctx.uploaded.contains(&doc) {
+            continue;
+        }
         for field in fields.iter().filter(|f| f.kind.is_choice()) {
-            if let Some(option) = field.options.iter().find(|o| names_file(o, file)) {
+            let ours: Vec<&String> = field
+                .options
+                .iter()
+                .filter(|o| names_file(o, file))
+                .collect();
+            // The copy the site marks as just added, else the first (newest).
+            let pick = ours.iter().find(|o| is_fresh(o)).or(ours.first()).copied();
+            if let Some(option) = pick {
                 listed.push(doc);
                 handled.push(&field.id);
                 if &field.value != option {
@@ -230,6 +242,14 @@ fn names_file(option: &str, file: &str) -> bool {
     let stem = file.rsplit_once('.').map_or(file, |(stem, _)| stem);
     let stem = normalise(stem);
     !stem.is_empty() && normalise(option).contains(&stem)
+}
+
+/// "Added just now", "Uploaded today", "1 minute ago".
+fn is_fresh(option: &str) -> bool {
+    let o = normalise(option);
+    ["just now", "today", "second", "minute"]
+        .iter()
+        .any(|w| o.contains(w))
 }
 
 fn has_any(label: &str, phrases: &[&str]) -> bool {
@@ -677,7 +697,8 @@ mod tests {
     fn seek_style_saved_resumes_get_an_upload_then_ours_is_picked() {
         // SEEK: the saved resumés are the options, plus an Upload button
         // (which the worker reports as a file field labelled "Resumé").
-        let old = "Test Person - Resume - SEEK-1.pdf Added 20 days ago";
+        // An older CareerPilot copy with the very same name, from another job.
+        let old = "Test Person - Resume.pdf Added 20 days ago";
         let mut resume = field(
             "f1",
             FieldKind::Radio,
@@ -691,12 +712,13 @@ mod tests {
             facts: &facts,
             answers: &[],
             has_cover_letter: false,
-            resume_file: "Test Person - Resume - Acme.docx",
+            resume_file: "Test Person - Resume.pdf",
             cover_letter_file: None,
             uploaded: &[],
         };
 
-        // 1. Ours isn't there yet: upload it, leave the old one alone for now.
+        // 1. Not uploaded in this run yet: upload it, even though an old copy
+        //    with the same name is listed (and picked) already.
         let first = plan(&[resume.clone(), upload_button.clone()], &ctx);
         assert_eq!(
             first.actions,
@@ -708,9 +730,11 @@ mod tests {
         );
         assert!(first.unknown.is_empty());
 
-        // 2. After the upload it's listed: pick it, and don't upload again.
-        let ours = "Test Person - Resume - Acme.docx Added just now";
-        resume.options.insert(0, ours.into());
+        // 2. After the upload it's listed: pick the fresh copy, not the old
+        //    one, and don't upload again.
+        let ours = "Test Person - Resume.pdf Added just now";
+        resume.options.push(ours.into());
+        ctx.uploaded = &[Doc::Resume];
         let second = plan(&[resume.clone(), upload_button.clone()], &ctx);
         assert_eq!(value_of(&second, "f1").as_deref(), Some(ours));
         assert_eq!(second.actions.len(), 1);
@@ -725,8 +749,7 @@ mod tests {
         assert!(!with_letter.needs_cover_letter);
 
         // 3. A site that renames the file: still only one upload per run.
-        resume.options.remove(0);
-        ctx.uploaded = &[Doc::Resume];
+        resume.options.pop();
         assert!(plan(&[resume, upload_button], &ctx).actions.is_empty());
     }
 

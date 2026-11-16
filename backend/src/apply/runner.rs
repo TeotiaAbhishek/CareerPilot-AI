@@ -6,7 +6,7 @@
 //! The tab stays open, so after you answer, the run carries on where it was.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -21,15 +21,20 @@ use tokio::{
 use uuid::Uuid;
 
 use super::{
+    auth::{self, Page},
     browser::{BrowserClient, BrowserError, ButtonKind, Field, FieldKind, Snapshot},
     experience,
     fill::{self, Action, Doc, FillContext, KnownAnswer},
     prompt::{self, PromptInput},
+    review,
 };
 use crate::{
     documents::{self, prompt::evidence_block, resume::MasterResume},
+    error::AppError,
     llm::{ChatOptions, LlmClient},
+    mail::{Found, Mail, Want},
     profile, settings,
+    vault::{self, crypto::VaultKey},
 };
 
 /// More than this many pages or fill rounds in one go and something is wrong.
@@ -50,6 +55,10 @@ struct Inner {
     events: broadcast::Sender<LiveEvent>,
     /// Short random pauses between actions, like a person. Off in tests.
     pacing: bool,
+    /// For logins the agent saved or creates. None: the vault is locked.
+    vault: Option<VaultKey>,
+    /// For email codes. None: sign-up pages that need one come to you.
+    mail: Option<Mail>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -100,6 +109,7 @@ pub struct Run {
     pub job_title: String,
     pub company: Option<String>,
     pub job_description: Option<String>,
+    pub practice: bool,
 }
 
 /// How a run ended this time.
@@ -156,8 +166,19 @@ impl Applier {
                 state: Mutex::new(ApplierState::default()),
                 events,
                 pacing,
+                vault: None,
+                mail: None,
             }),
         }
+    }
+
+    /// Give the runner the vault (saved logins) and the mailbox (sign-up
+    /// codes). Call it right after `new`, before anything else holds a clone.
+    pub fn with_auth(mut self, vault: Option<VaultKey>, mail: Mail) -> Self {
+        let inner = Arc::get_mut(&mut self.inner).expect("with_auth right after new");
+        inner.vault = vault;
+        inner.mail = Some(mail);
+        self
     }
 
     pub fn browser(&self) -> &BrowserClient {
@@ -277,7 +298,8 @@ impl Applier {
     async fn load_run(&self, id: Uuid) -> sqlx::Result<Option<Run>> {
         sqlx::query_as(
             "SELECT a.id, a.job_id, a.start_url, a.tab_id, a.resume_id, a.cover_letter_id,
-                    j.title AS job_title, j.company, j.description_text AS job_description
+                    j.title AS job_title, j.company, j.description_text AS job_description,
+                    a.practice
              FROM applications a JOIN jobs j ON j.id = a.job_id WHERE a.id = $1",
         )
         .bind(id)
@@ -439,13 +461,35 @@ impl Applier {
         let Some(resume_id) = run.resume_id else {
             return Err(RunError::Failed("No approved resume for this job.".into()));
         };
-        let resume = documents::docx_file(db, resume_id)
+        // PDFs, printed by the worker. The resume is fitted to one page.
+        let browser = &self.inner.browser;
+        // The worker prints them, so a stopped worker puts the run back in the queue.
+        let failed = |what: &str, e: AppError| match e {
+            AppError::Unavailable(why) => RunError::WorkerDown(why),
+            other => RunError::Failed(format!("Couldn't build the {what} file: {other}")),
+        };
+        let resume = documents::pdf::pdf_file(db, browser, resume_id)
             .await
-            .map_err(|e| RunError::Failed(format!("Couldn't build the resume file: {e}")))?;
+            .map_err(|e| failed("resume", e))?;
+        if !resume.left_out.is_empty() {
+            self.log(
+                run.id,
+                "info",
+                &format!(
+                    "To fit the resume on one page, the PDF leaves out {}.",
+                    plural(resume.left_out.len(), "bullet")
+                ),
+            )
+            .await;
+        }
+        let resume = (resume.name, resume.bytes);
         let cover_letter = match run.cover_letter_id {
-            Some(id) => Some(documents::docx_file(db, id).await.map_err(|e| {
-                RunError::Failed(format!("Couldn't build the cover letter file: {e}"))
-            })?),
+            Some(id) => {
+                let letter = documents::pdf::pdf_file(db, browser, id)
+                    .await
+                    .map_err(|e| failed("cover letter", e))?;
+                Some((letter.name, letter.bytes))
+            }
             None => None,
         };
         Ok(Documents {
@@ -454,23 +498,31 @@ impl Applier {
         })
     }
 
-    /// Answers the agent may reuse: the ones you gave for this application
-    /// first, then the answer bank.
-    /// Your answer to "Do you want to include a cover letter?" for this run:
-    /// None if you haven't been asked yet, Some(true) for "Yes, I'll add one".
-    async fn cover_letter_decision(&self, id: Uuid) -> sqlx::Result<Option<bool>> {
-        let answer: Option<String> = sqlx::query_scalar(
+    /// Your answer to one of the agent's own questions in this run (like
+    /// "Include a cover letter?"). None if you haven't been asked yet.
+    async fn decision(&self, id: Uuid, question_id: &str) -> sqlx::Result<Option<String>> {
+        sqlx::query_scalar(
             "SELECT answer FROM application_questions
              WHERE application_id = $1 AND field_id = $2 AND answer IS NOT NULL
              ORDER BY answered_at DESC LIMIT 1",
         )
         .bind(id)
-        .bind(COVER_LETTER_QUESTION_ID)
+        .bind(question_id)
         .fetch_optional(&self.inner.db)
-        .await?;
-        Ok(answer.map(|a| a == COVER_LETTER_YES))
+        .await
     }
 
+    /// Your answer to "Do you want to include a cover letter?" for this run:
+    /// None if you haven't been asked yet, Some(true) for "Yes, I'll add one".
+    async fn cover_letter_decision(&self, id: Uuid) -> sqlx::Result<Option<bool>> {
+        Ok(self
+            .decision(id, COVER_LETTER_QUESTION_ID)
+            .await?
+            .map(|a| a == COVER_LETTER_YES))
+    }
+
+    /// Answers the agent may reuse: the ones you gave for this application
+    /// first, then the answer bank.
     async fn known_answers(&self, id: Uuid) -> sqlx::Result<Vec<KnownAnswer>> {
         let db = &self.inner.db;
         let mine: Vec<(String, String)> = sqlx::query_as(
@@ -540,6 +592,7 @@ impl Applier {
         // filling it again would loop forever, so each field gets one go.
         let mut filled: HashSet<String> = HashSet::new();
         let mut uploaded: Vec<Doc> = Vec::new();
+        let mut auth = AuthState::default();
         for _ in 0..MAX_STEPS {
             if self.cancelled(run.id).await {
                 return Ok(Outcome::Cancelled);
@@ -564,11 +617,14 @@ impl Applier {
                     message: "A CAPTCHA appeared. The agent never solves those: finish this one yourself in the browser tab.".into(),
                 });
             }
-            if snap.password {
-                return Ok(Outcome::Manual {
-                    reason: "login",
-                    message: "This site wants you to log in. Log in yourself in the agent's browser tab, then click Try again.".into(),
-                });
+            // Sign in, sign up, email codes (employer careers sites).
+            match self
+                .auth_step(run, &tab, &snap, &facts, &docs, &mut auth)
+                .await?
+            {
+                AuthStep::NotAuth => {}
+                AuthStep::Next => continue,
+                AuthStep::Stop(outcome) => return Ok(outcome),
             }
 
             let answers = self.known_answers(run.id).await?;
@@ -676,7 +732,9 @@ impl Applier {
                 .collect();
             let mut still_unknown = text_unknown.clone();
             if !text_unknown.is_empty() {
-                let answered = self.ask_model(run, &facts, &answers, &text_unknown).await;
+                let answered = self
+                    .model_answers(run, &facts, &answers, &text_unknown)
+                    .await;
                 if !answered.is_empty() {
                     let answered_ids = self
                         .fill_fields(run.id, &tab, &answered, &text_unknown)
@@ -877,9 +935,10 @@ impl Applier {
         Ok(filled)
     }
 
-    /// The model's answers for fields code couldn't fill. Any problem with
-    /// the model just means those questions come to you instead.
-    async fn ask_model(
+    /// The model's answers for fields code couldn't fill, checked by the
+    /// reviewer when that's on (Settings). Any problem with the model just
+    /// means those questions come to you instead.
+    async fn model_answers(
         &self,
         run: &Run,
         facts: &profile::Facts,
@@ -907,7 +966,7 @@ impl Applier {
                 )
             })
             .unwrap_or_default();
-        let user = prompt::user_prompt(&PromptInput {
+        let context = prompt::context(&PromptInput {
             job_title: &run.job_title,
             company: run.company.as_deref(),
             job_description: run.job_description.as_deref(),
@@ -916,14 +975,124 @@ impl Applier {
             evidence: &evidence,
             fields,
         });
+
+        let mut answered = self.ask_model(run, &settings, &context, fields, "").await;
+        if !settings.apply_review || answered.is_empty() {
+            return answered;
+        }
+        // None: the reviewer failed (already logged), so the answers stand.
+        let Some(issues) = self
+            .review(run, &settings, &context, fields, &answered)
+            .await
+        else {
+            return answered;
+        };
+        if issues.is_empty() {
+            self.log(
+                run.id,
+                "review",
+                &format!(
+                    "Reviewer: {} checked, nothing to fix.",
+                    plural(answered.len(), "answer")
+                ),
+            )
+            .await;
+            return answered;
+        }
+        let label = |id: &str| {
+            fields
+                .iter()
+                .find(|f| f.id == id)
+                .map_or(String::new(), |f| f.label.clone())
+        };
+        for (id, issue) in &issues {
+            self.log(
+                run.id,
+                "review",
+                &format!("Reviewer flagged \"{}\": {issue}", label(id)),
+            )
+            .await;
+        }
+
+        // One more try for the flagged ones, with the reviewer's notes.
+        let note = review::revision_note(fields, &answered, &issues);
+        answered.retain(|(id, _)| !issues.iter().any(|(i, _)| i == id));
+        let flagged_fields: Vec<Field> = fields
+            .iter()
+            .filter(|f| issues.iter().any(|(i, _)| *i == f.id))
+            .cloned()
+            .collect();
+        let revised = self
+            .ask_model(run, &settings, &context, &flagged_fields, &note)
+            .await;
+        let still = if revised.is_empty() {
+            Some(Vec::new())
+        } else {
+            self.review(run, &settings, &context, &flagged_fields, &revised)
+                .await
+        };
+        let checked = if still.is_some() {
+            "passed the reviewer"
+        } else {
+            "the reviewer couldn't check it again"
+        };
+        let still = still.unwrap_or_default();
+        for (id, value) in revised {
+            if still.iter().any(|(i, _)| *i == id) {
+                continue;
+            }
+            self.log(
+                run.id,
+                "review",
+                &format!(
+                    "Revised \"{}\": {} ({checked}).",
+                    label(&id),
+                    shorten(&value)
+                ),
+            )
+            .await;
+            answered.push((id, value));
+        }
+        let left = flagged_fields
+            .iter()
+            .filter(|f| !answered.iter().any(|(id, _)| *id == f.id))
+            .count();
+        if left > 0 {
+            self.log(
+                run.id,
+                "review",
+                &format!(
+                    "Reviewer: {} still not right, so {} to you.",
+                    plural(left, "answer"),
+                    if left == 1 { "it comes" } else { "they come" }
+                ),
+            )
+            .await;
+        }
+        answered
+    }
+
+    /// One answering call. `extra` is appended to the prompt (the
+    /// reviewer's notes on a second try).
+    async fn ask_model(
+        &self,
+        run: &Run,
+        settings: &settings::Settings,
+        context: &str,
+        fields: &[Field],
+        extra: &str,
+    ) -> Vec<(String, String)> {
+        let user = format!(
+            "{context}\nFIELDS TO ANSWER (JSON)\n{}\n\nReturn one answer per field id.{extra}",
+            serde_json::to_string_pretty(&prompt::fields_json(fields)).unwrap_or_default(),
+        );
         self.log(
             run.id,
             "model",
             &format!(
-                "Asking {} about {} field{}.",
+                "Asking {} about {}.",
                 settings.apply_model,
-                fields.len(),
-                if fields.len() == 1 { "" } else { "s" }
+                plural(fields.len(), "field")
             ),
         )
         .await;
@@ -965,6 +1134,50 @@ impl Applier {
                 )
                 .await;
                 Vec::new()
+            }
+        }
+    }
+
+    /// The reviewer's call: (field id, what's wrong) for each flagged answer.
+    /// If the reviewer itself fails, the answers stand (it's an extra check).
+    async fn review(
+        &self,
+        run: &Run,
+        settings: &settings::Settings,
+        context: &str,
+        fields: &[Field],
+        answers: &[(String, String)],
+    ) -> Option<Vec<(String, String)>> {
+        let user = review::user_prompt(context, fields, answers);
+        let options = ChatOptions {
+            think: settings.apply_think,
+            num_ctx: None,
+        };
+        let result = self
+            .inner
+            .llm
+            .chat_json_with(
+                &settings.apply_model,
+                review::SYSTEM,
+                &user,
+                &review::schema(),
+                options,
+            )
+            .await
+            .map_err(|e| e.to_string())
+            .and_then(|raw| review::flagged(raw, answers));
+        match result {
+            Ok(issues) => Some(issues),
+            Err(error) => {
+                self.log(
+                    run.id,
+                    "warn",
+                    &format!(
+                        "The reviewer didn't answer properly ({error}), so the answers stand."
+                    ),
+                )
+                .await;
+                None
             }
         }
     }
@@ -1030,6 +1243,497 @@ fn page_signature(snap: &Snapshot) -> String {
 
 /// Questions the agent asks itself (not from the page) have ids starting
 /// with "cp-". Their answers belong to one run, never to the answer bank.
+/// What happened on a login, sign-up or email-code page.
+enum AuthStep {
+    /// Not one of those pages: carry on with the form.
+    NotAuth,
+    /// Did something: read the page again.
+    Next,
+    Stop(Outcome),
+}
+
+/// What the agent already tried in this run, so it never loops on a login.
+#[derive(Default)]
+struct AuthState {
+    /// Sites it signed in to with your saved login.
+    signed_in: HashSet<String>,
+    /// Sites it created an account on.
+    signed_up: HashSet<String>,
+    /// Codes and links it used from your email.
+    from_email: usize,
+    /// Emails older than this are from before the sign-up, so they're ignored.
+    since: Option<DateTime<Utc>>,
+    /// Sites where it tried your usual login (once each).
+    usual_tried: HashSet<String>,
+    /// Your usual login, just sent: saved for the site if the next page isn't
+    /// the sign-in page again.
+    usual_pending: Option<UsualAttempt>,
+    /// How often it entered your email on each site's "email only" sign-in page.
+    email_steps: HashMap<String, u8>,
+}
+
+struct UsualAttempt {
+    site: String,
+    login_url: String,
+    username: String,
+    password: String,
+}
+
+/// How long to wait for a sign-up email.
+const EMAIL_WAIT: Duration = Duration::from_secs(120);
+
+pub const SIGN_UP_QUESTION_ID: &str = "cp-sign-up";
+const SIGN_UP_YES: &str = "Yes, create it";
+
+fn sign_up_question(site: &str, email: &str) -> Field {
+    Field {
+        id: SIGN_UP_QUESTION_ID.into(),
+        kind: FieldKind::Radio,
+        label: format!(
+            "{site} needs an account to apply. Create one with {email}? The agent makes a strong password and saves it in your Vault. Creating it accepts the site's terms."
+        ),
+        required: true,
+        options: vec![SIGN_UP_YES.into(), "No, I'll do it myself".into()],
+        value: String::new(),
+    }
+}
+
+fn manual_login(message: String) -> AuthStep {
+    AuthStep::Stop(Outcome::Manual {
+        reason: "login",
+        message,
+    })
+}
+
+impl Applier {
+    /// Logins, sign-ups and email codes. Your saved login from the vault is
+    /// used when there is one. Without one, the agent creates an account only
+    /// after you say yes, with a new random password saved in your vault.
+    /// Passwords never appear in the log.
+    async fn auth_step(
+        &self,
+        run: &Run,
+        tab: &str,
+        snap: &Snapshot,
+        facts: &profile::Facts,
+        docs: &Documents,
+        state: &mut AuthState,
+    ) -> Result<AuthStep, RunError> {
+        let page = auth::classify(snap);
+        let site = auth::site_of(&snap.url).unwrap_or_else(|| "this site".into());
+        let errors = if snap.errors.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", snap.errors.join(" ").trim_end_matches('.'))
+        };
+        let db = &self.inner.db;
+        let browser = &self.inner.browser;
+
+        // Did your usual login just work? Still on that site's sign-in page
+        // means no ("wrong email or password", "no account found").
+        if let Some(attempt) = state.usual_pending.take() {
+            if matches!(page, Page::Login { .. }) && site == attempt.site {
+                self.log(
+                    run.id,
+                    "login",
+                    &format!("Your usual login didn't work on {site}{errors}."),
+                )
+                .await;
+            } else if let Some(key) = &self.inner.vault {
+                vault::save_login_for_site(
+                    db,
+                    key,
+                    &attempt.site,
+                    &attempt.login_url,
+                    &attempt.username,
+                    &attempt.password,
+                )
+                .await
+                .map_err(|e| RunError::Failed(format!("vault: {e}")))?;
+                self.log(
+                    run.id,
+                    "login",
+                    &format!(
+                        "Your usual login worked on {}, so it's saved in your Vault for next time.",
+                        attempt.site
+                    ),
+                )
+                .await;
+            }
+        }
+        if matches!(page, Page::Form) {
+            return Ok(AuthStep::NotAuth);
+        }
+
+        match page {
+            Page::Form => Ok(AuthStep::NotAuth),
+
+            Page::Login {
+                user,
+                password,
+                button,
+                create,
+            } => {
+                let saved = match &self.inner.vault {
+                    Some(key) => vault::agent_login(db, key, &site)
+                        .await
+                        .map_err(|e| RunError::Failed(format!("vault: {e}")))?,
+                    None => None,
+                };
+                if let Some(login) = saved {
+                    if !state.signed_in.insert(site.clone()) {
+                        return Ok(manual_login(format!(
+                            "Your saved login for {site} didn't work{errors}. Sign in yourself in the browser tab (and update the login in the Vault), then click Try again."
+                        )));
+                    }
+                    let Some(button) = button else {
+                        return Ok(manual_login(format!(
+                            "Couldn't find the Sign in button on {site}. Sign in yourself, then click Try again."
+                        )));
+                    };
+                    let mut fills = vec![(password.to_string(), login.password)];
+                    if let Some(user) = user {
+                        fills.push((user.id.clone(), login.username.clone()));
+                    }
+                    self.pause(400, 1200).await;
+                    browser.fill(tab, &fills).await?;
+                    browser.click_auth(tab, &button.id).await?;
+                    state.since = Some(Utc::now() - chrono::Duration::minutes(1));
+                    self.log(
+                        run.id,
+                        "login",
+                        &format!(
+                            "Signed in to {site} as {} (your saved login).",
+                            login.username
+                        ),
+                    )
+                    .await;
+                    return Ok(AuthStep::Next);
+                }
+                // No saved login: try your usual one once, unless you were
+                // already asked about creating an account in this run.
+                if let Some(key) = &self.inner.vault
+                    && !state.usual_tried.contains(&site)
+                    && self.decision(run.id, SIGN_UP_QUESTION_ID).await?.is_none()
+                    && let Some(usual) = vault::default_login(db, key)
+                        .await
+                        .map_err(|e| RunError::Failed(format!("vault: {e}")))?
+                {
+                    state.usual_tried.insert(site.clone());
+                    let username = if usual.username.is_empty() {
+                        facts.email.trim().to_string()
+                    } else {
+                        usual.username.clone()
+                    };
+                    if let Some(button) = button
+                        && !username.is_empty()
+                    {
+                        let mut fills = vec![(password.to_string(), usual.password.clone())];
+                        if let Some(user) = user {
+                            fills.push((user.id.clone(), username.clone()));
+                        }
+                        self.pause(400, 1200).await;
+                        browser.fill(tab, &fills).await?;
+                        browser.click_auth(tab, &button.id).await?;
+                        state.since = Some(Utc::now() - chrono::Duration::minutes(1));
+                        self.log(
+                            run.id,
+                            "login",
+                            &format!(
+                                "No saved login for {site}: trying your usual login ({username})."
+                            ),
+                        )
+                        .await;
+                        state.usual_pending = Some(UsualAttempt {
+                            site: site.clone(),
+                            login_url: snap.url.clone(),
+                            username,
+                            password: usual.password,
+                        });
+                        return Ok(AuthStep::Next);
+                    }
+                }
+                if let Some(create) = create {
+                    match self.sign_up_decision(run, &site, facts).await? {
+                        Err(step) => return Ok(step),
+                        Ok(()) => {
+                            self.pause(400, 1200).await;
+                            browser.click_auth(tab, &create.id).await?;
+                            self.log(
+                                run.id,
+                                "login",
+                                &format!(
+                                    "No saved login for {site}: going to \"{}\".",
+                                    create.text
+                                ),
+                            )
+                            .await;
+                            return Ok(AuthStep::Next);
+                        }
+                    }
+                }
+                Ok(manual_login(format!(
+                    "{site} wants you to sign in, and there's no saved login for it. Sign in yourself in the browser tab (and save the login in the Vault so the agent can next time), then click Try again."
+                )))
+            }
+
+            Page::SignUp {
+                user,
+                passwords,
+                button,
+            } => {
+                if let Err(step) = self.sign_up_decision(run, &site, facts).await? {
+                    return Ok(step);
+                }
+                if state.signed_up.contains(&site) {
+                    return Ok(manual_login(format!(
+                        "Creating the account on {site} didn't go through{errors}. Finish it yourself in the browser tab, then click Try again."
+                    )));
+                }
+                let Some(key) = &self.inner.vault else {
+                    return Ok(manual_login(
+                        "The vault is locked (VAULT_KEY), so the agent can't save a new password. Create the account yourself, then click Try again.".into(),
+                    ));
+                };
+                let Some(button) = button else {
+                    return Ok(manual_login(format!(
+                        "Couldn't find the Create account button on {site}. Finish it yourself, then click Try again."
+                    )));
+                };
+
+                // Your details from the profile (name, email, phone) and the
+                // terms box you agreed to. Anything else comes to you.
+                let answers = self.known_answers(run.id).await?;
+                let ctx = FillContext {
+                    facts,
+                    answers: &answers,
+                    has_cover_letter: false,
+                    resume_file: &docs.resume.0,
+                    cover_letter_file: None,
+                    uploaded: &[],
+                };
+                let mut plan = fill::plan(&snap.fields, &ctx);
+                plan.actions.retain(|a| matches!(a, Action::Fill { .. }));
+                if let Some(user) = user {
+                    plan.actions.retain(
+                        |a| !matches!(a, Action::Fill { field_id, .. } if *field_id == user.id),
+                    );
+                    plan.actions.push(Action::Fill {
+                        field_id: user.id.clone(),
+                        label: user.label.clone(),
+                        value: facts.email.clone(),
+                        source: fill::Source::Profile("email"),
+                    });
+                }
+                for terms in snap
+                    .fields
+                    .iter()
+                    .filter(|f| auth::is_terms(f) && f.is_empty())
+                {
+                    plan.unknown.retain(|f| f.id != terms.id);
+                    plan.actions.push(Action::Fill {
+                        field_id: terms.id.clone(),
+                        label: terms.label.clone(),
+                        value: "Yes".into(),
+                        source: fill::Source::AnswerBank(None),
+                    });
+                }
+                let required: Vec<Field> = plan
+                    .unknown
+                    .into_iter()
+                    .filter(|f| {
+                        f.required && f.kind != FieldKind::File && !f.label.trim().is_empty()
+                    })
+                    .collect();
+                if !required.is_empty() {
+                    let asked = self.ask_you(run.id, &required).await?;
+                    return Ok(AuthStep::Stop(Outcome::Waiting(asked)));
+                }
+                if facts.email.trim().is_empty() {
+                    return Ok(manual_login(
+                        "Add your email address on the Profile page first: it's the username for new accounts.".into(),
+                    ));
+                }
+                self.apply_plan(run.id, tab, &plan.actions, docs).await?;
+
+                let password = vault::password::generate(20);
+                // Saved before clicking, so it can't get lost.
+                vault::save_agent_login(db, key, &site, &snap.url, &facts.email, &password)
+                    .await
+                    .map_err(|e| RunError::Failed(format!("vault: {e}")))?;
+                let fills: Vec<(String, String)> = passwords
+                    .iter()
+                    .map(|id| (id.clone(), password.clone()))
+                    .collect();
+                browser.fill(tab, &fills).await?;
+                self.pause(400, 1200).await;
+                state.since = Some(Utc::now() - chrono::Duration::minutes(1));
+                browser.click_auth(tab, &button.id).await?;
+                state.signed_up.insert(site.clone());
+                state.signed_in.insert(site.clone());
+                self.log(
+                    run.id,
+                    "login",
+                    &format!(
+                        "Created an account on {site} for {}. The password is saved in your Vault.",
+                        facts.email
+                    ),
+                )
+                .await;
+                Ok(AuthStep::Next)
+            }
+
+            Page::EmailLogin { user, button } => {
+                let tries = state.email_steps.entry(site.clone()).or_insert(0);
+                *tries += 1;
+                if *tries > 2 {
+                    return Ok(manual_login(format!(
+                        "{site} asks for your email to sign in, and it didn't go through{errors}. Sign in yourself in the browser tab, then click Try again."
+                    )));
+                }
+                let Some(button) = button else {
+                    return Ok(manual_login(format!(
+                        "Couldn't find the button on {site}'s sign-in page. Sign in yourself, then click Try again."
+                    )));
+                };
+                // The email from your saved login for this site, else your
+                // usual login's, else your profile's.
+                let saved = vault::saved_username(db, &site).await?;
+                let usual = match &self.inner.vault {
+                    Some(key) => vault::default_login(db, key)
+                        .await
+                        .map_err(|e| RunError::Failed(format!("vault: {e}")))?
+                        .map(|l| l.username)
+                        .filter(|u| !u.is_empty()),
+                    None => None,
+                };
+                let username = saved
+                    .or(usual)
+                    .unwrap_or_else(|| facts.email.trim().to_string());
+                if username.is_empty() {
+                    return Ok(manual_login(format!(
+                        "{site} asks for your email to sign in. Add your email on the Profile page, or sign in yourself, then click Try again."
+                    )));
+                }
+                if user.value != username {
+                    self.pause(300, 900).await;
+                    browser
+                        .fill(tab, &[(user.id.clone(), username.clone())])
+                        .await?;
+                }
+                browser.click_auth(tab, &button.id).await?;
+                state.since = Some(Utc::now() - chrono::Duration::minutes(1));
+                self.log(
+                    run.id,
+                    "login",
+                    &format!("Entered {username} on {site}'s sign-in page."),
+                )
+                .await;
+                Ok(AuthStep::Next)
+            }
+
+            Page::Code { field, button } => {
+                let Some(button) = button else {
+                    return Ok(manual_login(format!(
+                        "Couldn't find the button to send the code on {site}. Type it in yourself, then click Try again."
+                    )));
+                };
+                match self.read_email(run, &site, state, Want::Code).await {
+                    Ok(Found::Code(code)) => {
+                        browser.fill(tab, &[(field.id.clone(), code)]).await?;
+                        self.pause(300, 900).await;
+                        browser.click_auth(tab, &button.id).await?;
+                        self.log(run.id, "login", "Typed in the code from your email.")
+                            .await;
+                        Ok(AuthStep::Next)
+                    }
+                    Ok(Found::Link(_)) => unreachable!("asked for a code"),
+                    Err(why) => Ok(manual_login(format!(
+                        "{site} sent a code by email, and {why} Type it in yourself in the browser tab, then click Try again."
+                    ))),
+                }
+            }
+
+            Page::CheckEmail => match self.read_email(run, &site, state, Want::Link).await {
+                Ok(Found::Link(link)) => {
+                    browser.goto(tab, &link).await?;
+                    self.log(
+                        run.id,
+                        "login",
+                        "Opened the verification link from your email.",
+                    )
+                    .await;
+                    Ok(AuthStep::Next)
+                }
+                Ok(Found::Code(_)) => unreachable!("asked for a link"),
+                Err(why) => Ok(manual_login(format!(
+                    "{site} sent a link to verify your email, and {why} Click it yourself, then click Try again."
+                ))),
+            },
+        }
+    }
+
+    /// Ok(()) once you've said yes to creating an account on this site in
+    /// this run; otherwise the step to take (ask you, or stop).
+    async fn sign_up_decision(
+        &self,
+        run: &Run,
+        site: &str,
+        facts: &profile::Facts,
+    ) -> Result<Result<(), AuthStep>, RunError> {
+        match self.decision(run.id, SIGN_UP_QUESTION_ID).await?.as_deref() {
+            Some(SIGN_UP_YES) => Ok(Ok(())),
+            Some(_) => Ok(Err(manual_login(format!(
+                "You chose to create the account on {site} yourself. Do it in the browser tab, then click Try again."
+            )))),
+            None => {
+                let asked = self
+                    .ask_you(run.id, &[sign_up_question(site, &facts.email)])
+                    .await?;
+                Ok(Err(AuthStep::Stop(Outcome::Waiting(asked))))
+            }
+        }
+    }
+
+    /// Wait for the sign-up email and take the code or link out of it. The
+    /// error says why not, as the end of a sentence.
+    async fn read_email(
+        &self,
+        run: &Run,
+        site: &str,
+        state: &mut AuthState,
+        want: Want,
+    ) -> Result<Found, String> {
+        if state.from_email >= 3 {
+            return Err("the ones from your email weren't accepted.".into());
+        }
+        let Some(mail) = &self.inner.mail else {
+            return Err("email codes aren't set up.".into());
+        };
+        let since = state
+            .since
+            .unwrap_or_else(|| Utc::now() - chrono::Duration::minutes(10));
+        let hint = auth::email_hint(site, run.company.as_deref());
+        self.log(
+            run.id,
+            "login",
+            &format!("Waiting for the email from {site} (up to 2 minutes)."),
+        )
+        .await;
+        match mail
+            .wait_for(run.practice, since, &hint, want, EMAIL_WAIT)
+            .await
+        {
+            Ok(Some(found)) => {
+                state.from_email += 1;
+                Ok(found)
+            }
+            Ok(None) => Err("it didn't arrive in your inbox within 2 minutes.".into()),
+            Err(error) => Err(format!("reading your email failed: {error}.")),
+        }
+    }
+}
+
 pub const COVER_LETTER_QUESTION_ID: &str = "cp-cover-letter";
 const COVER_LETTER_YES: &str = "Yes, I'll add one";
 
@@ -1042,6 +1746,15 @@ fn cover_letter_question() -> Field {
         required: true,
         options: vec!["No, skip it".into(), COVER_LETTER_YES.into()],
         value: String::new(),
+    }
+}
+
+/// "1 answer", "3 answers".
+fn plural(n: usize, word: &str) -> String {
+    if n == 1 {
+        format!("1 {word}")
+    } else {
+        format!("{n} {word}s")
     }
 }
 
