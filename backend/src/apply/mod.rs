@@ -2,10 +2,13 @@
 //! application form in its own browser window, then stops at the final
 //! Submit button for you. It never clicks Submit and never solves a CAPTCHA.
 
+pub mod auth;
 pub mod browser;
+pub mod cleanup;
 pub mod experience;
 pub mod fill;
 pub mod prompt;
+pub mod review;
 pub mod runner;
 
 use std::{convert::Infallible, time::Duration};
@@ -242,8 +245,17 @@ pub async fn start(
 }
 
 /// A practice run on the worker's practice form, with your newest approved resume.
+#[derive(Deserialize)]
+pub struct PracticeParams {
+    /// "careers": the practice careers site with a sign-in, a sign-up and an
+    /// email code. "code": one that signs you in with an emailed code only.
+    /// Otherwise the practice Quick Apply form.
+    site: Option<String>,
+}
+
 pub async fn practice(
     State(state): State<AppState>,
+    Query(params): Query<PracticeParams>,
 ) -> AppResult<(StatusCode, Json<ApplicationView>)> {
     let resume_id: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM documents WHERE kind = 'resume' AND status = 'approved'
@@ -267,10 +279,12 @@ pub async fn practice(
     for tab in old.into_iter().flatten() {
         let _ = state.applier.browser().close(&tab).await;
     }
-    let url = format!(
-        "{}/practice/quick-apply",
-        state.applier.browser().base_url()
-    );
+    let page = match params.site.as_deref() {
+        Some("careers") => "careers-login",
+        Some("code") => "careers-code",
+        _ => "quick-apply",
+    };
+    let url = format!("{}/practice/{page}", state.applier.browser().base_url());
     create(&state, "practice", &url, resume_id, None, true).await
 }
 

@@ -253,7 +253,7 @@ async fn drafts_checks_edits_approves_and_exports(db: PgPool) {
         res.headers()["content-disposition"]
             .to_str()
             .unwrap()
-            .contains("Test Person - Resume - Acme.docx")
+            .contains("Test Person - Resume.docx")
     );
     assert_eq!(&res.bytes().await.unwrap()[..2], b"PK");
 

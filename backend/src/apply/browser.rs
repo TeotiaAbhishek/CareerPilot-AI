@@ -93,6 +93,21 @@ pub struct Snapshot {
     pub errors: Vec<String>,
     pub captcha: bool,
     pub password: bool,
+    /// Ids of the visible password boxes. Filled like fields, never logged.
+    #[serde(default)]
+    pub secrets: Vec<String>,
+    /// The page's visible text (shortened), e.g. "We've emailed you a link".
+    #[serde(default)]
+    pub text: String,
+}
+
+/// A resumé saved on the job board's profile page.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SavedResume {
+    pub name: String,
+    /// The rest of its row, e.g. "Added 3 days ago".
+    pub added: String,
+    pub index: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -270,6 +285,81 @@ impl BrowserClient {
         )
         .await
         .map(|_| ())
+    }
+
+    /// Click Sign in / Create account / Verify on a login, sign-up or code
+    /// page. The worker allows a button labelled "Submit" there only.
+    pub async fn click_auth(&self, tab: &str, button_id: &str) -> Result<(), BrowserError> {
+        self.call(
+            reqwest::Method::POST,
+            &format!("/tabs/{tab}/click"),
+            Some(json!({ "id": button_id, "auth": true })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Go to a link in the tab (an email's "verify your account" link).
+    pub async fn goto(&self, tab: &str, url: &str) -> Result<(), BrowserError> {
+        self.call(
+            reqwest::Method::POST,
+            &format!("/tabs/{tab}/goto"),
+            Some(json!({ "url": url })),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// The resumés saved on the profile page in this tab whose names start
+    /// with one of `prefixes`, in page order.
+    pub async fn saved_resumes(
+        &self,
+        tab: &str,
+        prefixes: &[String],
+    ) -> Result<Vec<SavedResume>, BrowserError> {
+        let value = self
+            .call(
+                reqwest::Method::POST,
+                &format!("/tabs/{tab}/resumes"),
+                Some(json!({ "prefixes": prefixes })),
+            )
+            .await?;
+        serde_json::from_value(value["resumes"].clone())
+            .map_err(|e| BrowserError::Worker(format!("bad response: {e}")))
+    }
+
+    /// Delete the saved resumé at `index`, if it's still called `name`.
+    pub async fn delete_resume(
+        &self,
+        tab: &str,
+        prefixes: &[String],
+        index: usize,
+        name: &str,
+    ) -> Result<bool, BrowserError> {
+        let value = self
+            .call(
+                reqwest::Method::POST,
+                &format!("/tabs/{tab}/delete-resume"),
+                Some(json!({ "prefixes": prefixes, "index": index, "name": name })),
+            )
+            .await?;
+        Ok(value["deleted"].as_bool().unwrap_or(false))
+    }
+
+    /// Print HTML to an A4 PDF at `scale` (0.8 to 1): (bytes, pages).
+    pub async fn pdf(&self, html: &str, scale: f64) -> Result<(Vec<u8>, u32), BrowserError> {
+        let value = self
+            .call(
+                reqwest::Method::POST,
+                "/pdf",
+                Some(json!({ "html": html, "scale": scale })),
+            )
+            .await?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(value["pdf_base64"].as_str().unwrap_or(""))
+            .map_err(|e| BrowserError::Worker(format!("bad PDF: {e}")))?;
+        let pages = value["pages"].as_u64().unwrap_or(0) as u32;
+        Ok((bytes, pages))
     }
 
     pub async fn focus(&self, tab: &str) -> Result<(), BrowserError> {

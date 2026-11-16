@@ -8,6 +8,7 @@ use careerpilot_api::{
     documents::worker::Drafter,
     import,
     llm::{LlmClient, OllamaClient},
+    mail::Mail,
     profile,
     scoring::Scorer,
     scraper::{
@@ -114,7 +115,14 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
 
     // The apply runner uses the same model client (and GPU turns) too.
     let browser = BrowserClient::new(&config.browser_worker_url)?;
-    let applier = Applier::new(db.clone(), llm, browser, true);
+    let mail = Mail::new(
+        db.clone(),
+        vault.clone(),
+        config.gmail.clone(),
+        &config.browser_worker_url,
+    )?;
+    let applier =
+        Applier::new(db.clone(), llm, browser, true).with_auth(vault.clone(), mail.clone());
     let requeued = applier.requeue_interrupted().await?;
     if requeued > 0 {
         tracing::warn!(requeued, "re-queued applications interrupted by a restart");
@@ -133,6 +141,7 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         drafter,
         applier,
         vault,
+        mail,
     };
     let app = build_app(state, &config.web_origin);
 

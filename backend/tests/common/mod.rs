@@ -7,6 +7,7 @@ use careerpilot_api::{
     build_app,
     documents::worker::Drafter,
     llm::{LlmClient, OllamaClient},
+    mail::Mail,
     scoring::Scorer,
     scraper::seek::{Politeness, SeekClient},
     vault::crypto::VaultKey,
@@ -78,12 +79,16 @@ async fn spawn_full(
     let llm = LlmClient::from(OllamaClient::new(ollama_url, 8192).unwrap());
     let scorer = Scorer::new(db.clone(), llm.clone());
     let drafter = Drafter::new(db.clone(), llm.clone());
+    let vault = unlocked.then(|| VaultKey::from_base64(TEST_VAULT_KEY).unwrap());
+    // Sign-up codes come from the (fake) worker's practice mailbox in tests.
+    let mail = Mail::new(db.clone(), vault.clone(), None, worker_url).unwrap();
     let applier = Applier::new(
         db.clone(),
         llm,
         BrowserClient::new(worker_url).unwrap(),
         false,
-    );
+    )
+    .with_auth(vault.clone(), mail.clone());
     let state = AppState {
         db: db.clone(),
         seek: SeekClient::new(seek_base_url, Politeness::none()).unwrap(),
@@ -94,7 +99,8 @@ async fn spawn_full(
         scorer: scorer.clone(),
         drafter: drafter.clone(),
         applier: applier.clone(),
-        vault: unlocked.then(|| VaultKey::from_base64(TEST_VAULT_KEY).unwrap()),
+        vault,
+        mail,
     };
     let app = build_app(state, "http://localhost:3000");
 

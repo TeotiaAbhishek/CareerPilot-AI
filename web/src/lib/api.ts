@@ -169,6 +169,8 @@ export type Settings = {
   apply_daily_cap: number;
   apply_model: string;
   apply_think: boolean;
+  /** A second model call checks the agent's answers before they go in. */
+  apply_review: boolean;
   updated_at: string;
 };
 
@@ -499,7 +501,17 @@ export type ApplicationQuestion = {
   savable: boolean;
 };
 
-export type RunEventKind = "info" | "fill" | "model" | "written" | "answer" | "click" | "warn" | "error";
+export type RunEventKind =
+  | "info"
+  | "fill"
+  | "model"
+  | "written"
+  | "answer"
+  | "click"
+  | "warn"
+  | "error"
+  | "login"
+  | "review";
 
 export type RunEvent = {
   id: number;
@@ -532,6 +544,27 @@ export type ApplyStatus = {
   parallel: number;
   paused_reason: string | null;
 };
+
+/** Gmail, read-only, for the codes employers email you. */
+export type MailStatus = {
+  /** GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET are set in backend/.env. */
+  configured: boolean;
+  /** The connected Gmail address, or null. */
+  account: string | null;
+};
+
+export type SavedResume = {
+  index: number;
+  name: string;
+  added: string;
+  /** Suggested for deletion: older than the newest 3. */
+  delete: boolean;
+};
+
+export type SeekScan = { tab: string; resumes: SavedResume[] };
+export type SeekDeleted = { deleted: string[]; failed: string[] };
+
+export type PdfCheck = { pages: number; left_out: string[] };
 
 export type AnswerSubmission = { question_id: string; answer: string; save: boolean };
 
@@ -578,7 +611,30 @@ export const approveDocument = (id: string) => apiSend<DocumentView>("POST", `/a
 export const docxUrl = (id: string) => `${API_URL}/api/documents/${id}/docx`;
 export const startApplication = (jobId: string) =>
   apiSend<ApplicationView>("POST", `/api/jobs/${encodeURIComponent(jobId)}/apply`);
-export const startPractice = () => apiSend<ApplicationView>("POST", "/api/applications/practice");
+/** A plain link downloads the PDF (fitted to one page). */
+export const pdfUrl = (id: string) => `${API_URL}/api/documents/${id}/pdf`;
+export const checkPdf = (id: string) =>
+  apiGet<PdfCheck>(`/api/documents/${id}/pdf-check`, { cache: "no-store" });
+/**
+ * `site: "careers"` practises signing in or up on an employer's careers site,
+ * `"code"` signing in with an emailed code only.
+ */
+export const startPractice = (site?: "careers" | "code") =>
+  apiSend<ApplicationView>("POST", `/api/applications/practice${site ? `?site=${site}` : ""}`);
+/** Your usual login, tried on sites with no saved login. The password never comes back. */
+export type UsualLogin = { set: boolean; username: string };
+export const getUsualLogin = () => apiGet<UsualLogin>("/api/vault/default", { cache: "no-store" });
+export const saveUsualLogin = (username: string, password: string) =>
+  apiSend<UsualLogin>("PUT", "/api/vault/default", { username, password });
+export const deleteUsualLogin = () => apiSend<void>("DELETE", "/api/vault/default");
+export const getMail = () => apiGet<MailStatus>("/api/mail", { cache: "no-store" });
+/** A plain link: Google asks you to allow read-only access, then sends you back to Settings. */
+export const mailConnectUrl = () => `${API_URL}/api/mail/connect`;
+export const disconnectMail = () => apiSend<void>("DELETE", "/api/mail");
+export const scanSeekResumes = (practice = false) =>
+  apiGet<SeekScan>(`/api/seek/resumes${practice ? "?practice=true" : ""}`, { cache: "no-store" });
+export const deleteSeekResume = (tab: string, resume: { index: number; name: string }) =>
+  apiSend<SeekDeleted>("POST", "/api/seek/resumes/delete", { tab, resumes: [resume] });
 export const answerQuestions = (id: string, answers: AnswerSubmission[]) =>
   apiSend<ApplicationView>("POST", `/api/applications/${id}/answers`, { answers });
 export const retryApplication = (id: string) => apiSend<ApplicationView>("POST", `/api/applications/${id}/retry`);

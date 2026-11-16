@@ -29,13 +29,16 @@ pub struct Settings {
     /// The Ollama model for form questions code can't answer.
     pub apply_model: String,
     pub apply_think: bool,
+    /// A second model call checks the model's answers before they go in.
+    pub apply_review: bool,
     pub updated_at: DateTime<Utc>,
 }
 
 pub async fn load(db: &PgPool) -> sqlx::Result<Settings> {
     sqlx::query_as(
         "SELECT scoring_enabled, scoring_model, relevance_threshold, drafting_model, drafting_think,
-                apply_parallel, apply_daily_cap, apply_model, apply_think, updated_at
+                apply_parallel, apply_daily_cap, apply_model, apply_think, apply_review,
+                updated_at
          FROM settings",
     )
     .fetch_one(db)
@@ -58,6 +61,7 @@ pub struct SettingsPatch {
     pub apply_daily_cap: Option<i32>,
     pub apply_model: Option<String>,
     pub apply_think: Option<bool>,
+    pub apply_review: Option<bool>,
 }
 
 pub async fn update(
@@ -102,10 +106,11 @@ pub async fn update(
             apply_daily_cap = coalesce($7, apply_daily_cap),
             apply_model = coalesce($8, apply_model),
             apply_think = coalesce($9, apply_think),
+            apply_review = coalesce($10, apply_review),
             updated_at = now()
          RETURNING scoring_enabled, scoring_model, relevance_threshold, drafting_model,
                    drafting_think, apply_parallel, apply_daily_cap, apply_model, apply_think,
-                   updated_at",
+                   apply_review, updated_at",
     )
     .bind(patch.scoring_enabled)
     .bind(model)
@@ -116,6 +121,7 @@ pub async fn update(
     .bind(patch.apply_daily_cap)
     .bind(apply_model)
     .bind(patch.apply_think)
+    .bind(patch.apply_review)
     .fetch_one(&state.db)
     .await?;
 

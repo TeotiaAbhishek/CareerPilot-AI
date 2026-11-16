@@ -23,6 +23,8 @@ pub struct Config {
     pub vault_key: Option<String>,
     /// The browser worker (browser-worker/, `npm start`).
     pub browser_worker_url: String,
+    /// Read-only Gmail for sign-up codes. None until GMAIL_CLIENT_ID is set.
+    pub gmail: Option<crate::mail::GmailConfig>,
 }
 
 impl Config {
@@ -65,6 +67,35 @@ impl Config {
         let browser_worker_url =
             std::env::var("BROWSER_WORKER_URL").unwrap_or_else(|_| "http://127.0.0.1:8090".into());
 
+        let env_or = |name: &str, default: &str| {
+            std::env::var(name)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .unwrap_or_else(|| default.to_string())
+        };
+        let gmail = match (
+            std::env::var("GMAIL_CLIENT_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+            std::env::var("GMAIL_CLIENT_SECRET")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
+        ) {
+            (Some(client_id), Some(client_secret)) => Some(crate::mail::GmailConfig {
+                client_id: client_id.trim().to_string(),
+                client_secret: client_secret.trim().to_string(),
+                auth_url: env_or(
+                    "GOOGLE_AUTH_URL",
+                    "https://accounts.google.com/o/oauth2/v2/auth",
+                ),
+                token_url: env_or("GOOGLE_TOKEN_URL", "https://oauth2.googleapis.com/token"),
+                api_url: env_or("GMAIL_API_URL", "https://gmail.googleapis.com"),
+                redirect_uri: format!("http://{bind_addr}/api/mail/callback"),
+                web_origin: web_origin.clone(),
+            }),
+            _ => None,
+        };
+
         Ok(Self {
             database_url,
             bind_addr,
@@ -77,6 +108,7 @@ impl Config {
             resume_path,
             vault_key,
             browser_worker_url,
+            gmail,
         })
     }
 }

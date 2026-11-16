@@ -30,6 +30,8 @@ export const EVENT_TONE: Record<RunEventKind, string> = {
   click: "text-muted-foreground",
   warn: "text-warning",
   error: "text-danger",
+  login: "text-primary",
+  review: "text-primary",
 };
 
 /** The agent is still working on it, or will be soon. */

@@ -211,6 +211,11 @@ async fn fake_worker(form: Shared) -> String {
     async fn close() -> Json<Value> {
         Json(json!({ "ok": true }))
     }
+    /// The worker prints the documents to PDF: one page each here.
+    async fn pdf(Json(body): Json<Value>) -> Json<Value> {
+        assert!(body["html"].as_str().unwrap().contains("<html"));
+        Json(json!({ "pdf_base64": "JVBERi0xLjQ=", "pages": 1 }))
+    }
 
     let app = Router::new()
         .route("/health", get(health))
@@ -221,12 +226,14 @@ async fn fake_worker(form: Shared) -> String {
         .route("/tabs/{tab}/upload", post(upload))
         .route("/tabs/{tab}/click", post(click))
         .route("/tabs/{tab}/focus", post(focus))
+        .route("/pdf", post(pdf))
         .with_state(form);
     serve(app).await
 }
 
 /// Answers "years with SQL" from the resume, writes "why this role", and
-/// leaves the declaration to you.
+/// leaves the declaration to you. As the reviewer, it flags "3 years" of SQL
+/// once, and the answering call revises it to "2 years".
 const WHY: &str = "I have built SQL reporting for three years, and this role is mostly SQL.";
 
 async fn fake_ollama(prompts: Arc<Mutex<Vec<String>>>) -> String {
@@ -239,10 +246,30 @@ async fn fake_ollama(prompts: Arc<Mutex<Vec<String>>>) -> String {
             "form filling doesn't think by default"
         );
         let prompt = body["messages"][1]["content"].as_str().unwrap().to_string();
+        let system = body["messages"][0]["content"].as_str().unwrap_or("");
+        if system.starts_with("You review") {
+            let flag_f5 = prompt.contains("\"answer\": \"3 years\"");
+            let mut reviews = Vec::new();
+            for id in ["f5", "f7", "f8", "f9", "f10"] {
+                if prompt.contains(&format!("\"id\": \"{id}\"")) {
+                    let bad = id == "f5" && flag_f5;
+                    reviews.push(json!({
+                        "id": id,
+                        "ok": !bad,
+                        "issue": if bad { json!("The resume shows SQL for 2 years, not 3.") } else { Value::Null },
+                    }));
+                }
+            }
+            prompts.lock().unwrap().push(prompt);
+            let content = json!({ "reviews": reviews }).to_string();
+            return Json(json!({ "message": { "role": "assistant", "content": content } }));
+        }
+        let revising = prompt.contains("Reviewer:");
         let mut answers = Vec::new();
         for id in ["f5", "f7", "f8", "f9", "f10"] {
             if prompt.contains(&format!("\"id\": \"{id}\"")) {
                 let value = match id {
+                    "f5" if revising => json!("2 years"),
                     "f5" => json!("3 years"),
                     "f7" => json!(WHY),
                     "f10" => json!("No"),
@@ -374,12 +401,12 @@ async fn fills_the_form_asks_you_once_and_stops_at_submit(db: PgPool) {
         assert_eq!(f.values["f3"], "Upload a resumé");
         assert_eq!(
             f.uploads,
-            vec![(
-                "f4".to_string(),
-                "Test Person - Resume - Acme.docx".to_string()
-            )]
+            vec![("f4".to_string(), "Test Person - Resume.pdf".to_string())]
         );
-        assert_eq!(f.values["f5"], "3 years");
+        assert_eq!(
+            f.values["f5"], "2 years",
+            "revised after the reviewer flagged it"
+        );
         assert_eq!(f.values["f6"], "Yes");
         assert_eq!(f.values["f7"], WHY);
         assert!(!f.values.contains_key("f9"));
@@ -413,7 +440,7 @@ async fn fills_the_form_asks_you_once_and_stops_at_submit(db: PgPool) {
         .collect();
     assert!(
         log.iter()
-            .any(|m| m.contains("Uploaded Test Person - Resume - Acme.docx"))
+            .any(|m| m.contains("Uploaded Test Person - Resume.pdf"))
     );
     assert!(log.iter().any(|m| m.contains("(answer bank)")));
     assert!(log.iter().any(|m| m.contains("the model's answer")));
@@ -473,10 +500,33 @@ async fn fills_the_form_asks_you_once_and_stops_at_submit(db: PgPool) {
 
     let prompts = prompts.lock().unwrap().clone();
     assert!(prompts[0].contains("SQL role"), "the model sees the job ad");
+    assert!(
+        prompts.iter().any(|p| p.contains("ANSWERS TO CHECK")),
+        "the reviewer checked the answers"
+    );
+    let reviewed: Vec<String> = sqlx::query_scalar(
+        "SELECT message FROM application_events WHERE application_id = $1::uuid AND kind = 'review' ORDER BY id",
+    )
+    .bind(&id)
+    .fetch_all(&db)
+    .await
+    .unwrap();
+    assert!(
+        reviewed
+            .iter()
+            .any(|m| m.contains("Reviewer flagged") && m.contains("2 years, not 3")),
+        "{reviewed:?}"
+    );
+    assert!(
+        reviewed
+            .iter()
+            .any(|m| m.starts_with("Revised") && m.contains("2 years")),
+        "{reviewed:?}"
+    );
     assert_eq!(
         prompts
             .iter()
-            .filter(|p| p.contains("police check"))
+            .filter(|p| p.contains("FIELDS TO ANSWER") && p.contains("police check"))
             .count(),
         2,
         "once per pass (before and after your answer), even though it still looks empty"

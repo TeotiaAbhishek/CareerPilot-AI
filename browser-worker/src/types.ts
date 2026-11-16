@@ -47,6 +47,10 @@ export interface PageSnapshot {
   captcha: boolean;
   /** A visible password box: this is a login or sign-up page. */
   password: boolean;
+  /** Ids of the visible password boxes (two on most sign-up pages). Fill them like fields. */
+  secrets: string[];
+  /** The page's visible text, shortened: "We've emailed you a link" and the like. */
+  text: string;
 }
 
 /** A snapshot as the API receives it: buttons come with their kind. */
@@ -63,4 +67,13 @@ export interface FillResult {
   id: string;
   ok: boolean;
   error?: string;
+}
+
+/** A resumé saved on the job board's profile page. */
+export interface SavedResume {
+  name: string;
+  /** The rest of its row, e.g. "Added 3 days ago". */
+  added: string;
+  /** Its position among the matches, for deleting it. */
+  index: number;
 }
