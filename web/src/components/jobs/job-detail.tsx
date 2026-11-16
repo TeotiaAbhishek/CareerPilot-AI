@@ -11,7 +11,7 @@ import {
   TriangleAlert,
   Zap,
 } from "lucide-react";
-import { useEffect, useEffectEvent } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -57,6 +57,8 @@ export function JobDetailView({
   const path = `/api/jobs/${encodeURIComponent(id)}`;
   const { data: job, error, loading, mutate } = useApi<JobDetail>(path);
   const current = job?.id === id ? job : undefined;
+  // Bumped when one-click Apply queues a draft, so the documents panel loads it.
+  const [docsVersion, setDocsVersion] = useState(0);
 
   // While a score is on its way, check every few seconds. (A quiet fetch,
   // not reload(), so the page doesn't flash a skeleton each time.)
@@ -232,9 +234,13 @@ export function JobDetailView({
 
       <ScorePanel job={current} onLabel={label} onRescore={rescore} />
 
-      <PreparePanel jobId={current.id} canDraft={!!current.description_text} />
+      <PreparePanel key={docsVersion} jobId={current.id} canDraft={!!current.description_text} />
 
-      <ApplyPanel jobId={current.id} applyType={current.apply_type} />
+      <ApplyPanel
+        jobId={current.id}
+        applyType={current.apply_type}
+        onStarted={() => setDocsVersion((v) => v + 1)}
+      />
 
       {current.scrape_status === "failed" ? (
         <div className="m-6 mb-0 flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">

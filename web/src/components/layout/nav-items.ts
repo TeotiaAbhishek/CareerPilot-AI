@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Briefcase,
   FileText,
   FlaskConical,
@@ -21,6 +22,7 @@ export const NAV_ITEMS: NavItem[] = [
   { href: "/jobs", label: "Jobs", icon: Briefcase },
   { href: "/evals", label: "Evals", icon: FlaskConical },
   { href: "/applications", label: "Applications", icon: KanbanSquare },
+  { href: "/insights", label: "Insights", icon: BarChart3 },
   { href: "/documents", label: "Documents", icon: FileText },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/settings", label: "Settings", icon: Settings },

@@ -231,6 +231,7 @@ pub async fn prepare(
             .execute(&state.db)
             .await?;
     }
+    crate::tracker::track(&state.db, &job_id).await?;
     state.drafter.wake();
     job_documents(State(state), Path(job_id)).await
 }

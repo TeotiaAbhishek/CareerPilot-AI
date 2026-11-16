@@ -16,10 +16,15 @@ export function JobList({
   jobs,
   selectedId,
   onSelect,
+  checked,
+  onCheck,
 }: {
   jobs: JobSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Jobs ticked for "Apply to selected". */
+  checked: Set<string>;
+  onCheck: (id: string, on: boolean) => void;
 }) {
   return (
     <ul className="flex flex-col gap-2" aria-label="Jobs">
@@ -27,14 +32,23 @@ export function JobList({
         const selected = job.id === selectedId;
         const unread = job.viewed_at === null;
         return (
-          <li key={job.id}>
+          <li key={job.id} className="flex items-stretch gap-2">
+            <label className="flex shrink-0 cursor-pointer items-start pt-4.5 pl-1">
+              <input
+                type="checkbox"
+                className="size-4 accent-primary"
+                checked={checked.has(job.id)}
+                onChange={(e) => onCheck(job.id, e.target.checked)}
+                aria-label={`Select ${job.title}`}
+              />
+            </label>
             <button
               type="button"
               id={`job-${job.id}`}
               onClick={() => onSelect(job.id)}
               aria-current={selected ? "true" : undefined}
               className={cn(
-                "group w-full rounded-lg border bg-card p-4 text-left transition-colors hover:border-primary/40",
+                "group min-w-0 flex-1 rounded-lg border bg-card p-4 text-left transition-colors hover:border-primary/40",
                 selected && "border-primary ring-1 ring-primary",
               )}
             >

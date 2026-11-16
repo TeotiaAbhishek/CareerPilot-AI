@@ -31,6 +31,9 @@ pub struct Settings {
     pub apply_think: bool,
     /// A second model call checks the model's answers before they go in.
     pub apply_review: bool,
+    /// One-click Apply: approve a resume draft the checker found nothing
+    /// wrong with, and start applying straight away.
+    pub auto_approve: bool,
     pub updated_at: DateTime<Utc>,
 }
 
@@ -38,7 +41,7 @@ pub async fn load(db: &PgPool) -> sqlx::Result<Settings> {
     sqlx::query_as(
         "SELECT scoring_enabled, scoring_model, relevance_threshold, drafting_model, drafting_think,
                 apply_parallel, apply_daily_cap, apply_model, apply_think, apply_review,
-                updated_at
+                auto_approve, updated_at
          FROM settings",
     )
     .fetch_one(db)
@@ -62,6 +65,7 @@ pub struct SettingsPatch {
     pub apply_model: Option<String>,
     pub apply_think: Option<bool>,
     pub apply_review: Option<bool>,
+    pub auto_approve: Option<bool>,
 }
 
 pub async fn update(
@@ -107,10 +111,11 @@ pub async fn update(
             apply_model = coalesce($8, apply_model),
             apply_think = coalesce($9, apply_think),
             apply_review = coalesce($10, apply_review),
+            auto_approve = coalesce($11, auto_approve),
             updated_at = now()
          RETURNING scoring_enabled, scoring_model, relevance_threshold, drafting_model,
                    drafting_think, apply_parallel, apply_daily_cap, apply_model, apply_think,
-                   apply_review, updated_at",
+                   apply_review, auto_approve, updated_at",
     )
     .bind(patch.scoring_enabled)
     .bind(model)
@@ -122,6 +127,7 @@ pub async fn update(
     .bind(apply_model)
     .bind(patch.apply_think)
     .bind(patch.apply_review)
+    .bind(patch.auto_approve)
     .fetch_one(&state.db)
     .await?;
 

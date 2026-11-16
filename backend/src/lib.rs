@@ -14,6 +14,7 @@ pub mod scoring;
 pub mod scraper;
 pub mod searches;
 pub mod settings;
+pub mod tracker;
 pub mod vault;
 
 use std::time::Duration;
@@ -137,6 +138,16 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/documents/{id}/pdf", get(documents::pdf::download))
         .route("/documents/{id}/pdf-check", get(documents::pdf::check))
         .route("/jobs/{id}/apply", post(apply::start))
+        .route("/jobs/{id}/one-click", post(tracker::one_click))
+        .route("/apply/bulk", post(tracker::bulk))
+        .route("/tracker", get(tracker::board))
+        .route(
+            "/tracker/{id}",
+            get(tracker::get)
+                .put(tracker::update)
+                .delete(tracker::remove),
+        )
+        .route("/insights", get(tracker::insights))
         .route("/applications", get(apply::list))
         .route("/applications/practice", post(apply::practice))
         .route("/applications/{id}", get(apply::get))

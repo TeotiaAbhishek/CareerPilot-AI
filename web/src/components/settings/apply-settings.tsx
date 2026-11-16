@@ -188,6 +188,21 @@ export function ApplySettings() {
                   onCheckedChange={(on) => save({ apply_review: on }, on ? "Reviewer on" : "Reviewer off")}
                 />
               </div>
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium">Auto-approve clean drafts</p>
+                  <p className="text-sm text-muted-foreground">
+                    With one-click Apply, a resume the checker finds nothing wrong with is approved for you and the agent
+                    starts. Drafts with flagged lines always wait for you.
+                  </p>
+                </div>
+                <Switch
+                  label="Auto-approve clean drafts"
+                  checked={cfg.auto_approve}
+                  disabled={busy}
+                  onCheckedChange={(on) => save({ auto_approve: on }, on ? "Auto-approve on" : "Auto-approve off")}
+                />
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-2">

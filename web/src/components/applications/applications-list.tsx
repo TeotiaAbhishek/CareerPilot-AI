@@ -14,7 +14,7 @@ import { timeAgo } from "@/lib/format";
 
 const POLL_MS = 5000;
 
-/** Every apply run, your turn first. (The full pipeline board comes in F7.) */
+/** Every agent run, your turn first. Shown under "Agent runs" on the Applications page. */
 export function ApplicationsList() {
   const { data, error, loading, reload } = useApi<Application[]>("/api/applications");
 

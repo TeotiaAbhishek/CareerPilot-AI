@@ -161,6 +161,18 @@ pub async fn run(local: &PgPool) -> Result<()> {
         "Applications: {imported} imported, {} already there",
         applications.len() as u64 - imported
     );
+    // They go on your board as Submitted, with their dates (F7).
+    let tracked = sqlx::query(
+        "INSERT INTO tracker (job_id, stage, applied_at, stage_changed_at, created_at)
+         SELECT job_id, 'submitted', coalesce(applied_at, updated_at), coalesce(applied_at, updated_at),
+                coalesce(applied_at, updated_at)
+         FROM legacy_applications
+         ON CONFLICT (job_id) DO NOTHING",
+    )
+    .execute(local)
+    .await?
+    .rows_affected();
+    println!("Tracker:      {tracked} added as Submitted");
 
     Ok(())
 }
