@@ -1,13 +1,15 @@
 "use client";
 
-import { Briefcase, MousePointerClick, SearchX, Sparkles } from "lucide-react";
+import { Briefcase, Loader2, MousePointerClick, SearchX, Send, Sparkles, X } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { useApi } from "@/hooks/use-api";
-import { type Facet, type JobDetail, type JobPage, summaryPatch } from "@/lib/api";
+import { type Facet, type JobDetail, type JobPage, bulkApply, errorMessage, summaryPatch } from "@/lib/api";
 import {
   DEFAULT_FILTERS,
   type JobFilters,
@@ -15,6 +17,7 @@ import {
   filtersToSearchParams,
   parseFilters,
 } from "@/lib/jobs-query";
+import { bulkSummary } from "@/lib/tracker";
 
 import { JobDetailView } from "./job-detail";
 import { JobFiltersBar } from "./job-filters";
@@ -93,6 +96,36 @@ export function JobsView() {
     return () => window.removeEventListener("keydown", onKey);
   }, [jobs, selectedId, select]);
 
+  // Ticked jobs for "Apply to selected". They stay ticked across pages.
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [applying, setApplying] = useState(false);
+  const check = useCallback(
+    (id: string, on: boolean) =>
+      setChecked((prev) => {
+        const next = new Set(prev);
+        if (on) next.add(id);
+        else next.delete(id);
+        return next;
+      }),
+    [],
+  );
+
+  async function applyToSelected() {
+    setApplying(true);
+    try {
+      const result = await bulkApply([...checked]);
+      const message = bulkSummary(result.started, result.skipped);
+      const open = { label: "Open", onClick: () => router.push("/applications") };
+      if (result.started > 0) toast.success(message, { action: open });
+      else toast.error(message);
+      setChecked(new Set());
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setApplying(false);
+    }
+  }
+
   const filtered = JSON.stringify(filters) !== JSON.stringify(DEFAULT_FILTERS);
 
   return (
@@ -135,7 +168,18 @@ export function JobsView() {
             )
           ) : (
             <div className={list.loading ? "opacity-60 transition-opacity" : undefined}>
-              <JobList jobs={jobs} selectedId={selectedId} onSelect={select} />
+              {checked.size > 0 ? (
+                <div className="sticky top-16 z-10 mb-2 flex flex-wrap items-center gap-2 rounded-lg border bg-card p-2 pl-3 text-sm shadow-sm">
+                  <span className="font-medium tabular-nums">{checked.size} selected</span>
+                  <Button size="sm" className="ml-auto" disabled={applying} onClick={applyToSelected}>
+                    {applying ? <Loader2 className="animate-spin" /> : <Send />} Apply to selected
+                  </Button>
+                  <Button size="sm" variant="ghost" onClick={() => setChecked(new Set())} aria-label="Clear selection">
+                    <X />
+                  </Button>
+                </div>
+              ) : null}
+              <JobList jobs={jobs} selectedId={selectedId} onSelect={select} checked={checked} onCheck={check} />
               <Pagination
                 page={list.data.page}
                 pageSize={list.data.page_size}

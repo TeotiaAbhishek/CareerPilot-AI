@@ -33,3 +33,14 @@ export function formatDateTime(iso: string | null | undefined): string {
     minute: "2-digit",
   });
 }
+
+/** "16 Nov", or "16 Nov 2025" outside this year. */
+export function formatDate(iso: string | null | undefined, now: Date = new Date()): string {
+  if (!iso) return "";
+  const date = new Date(iso);
+  return date.toLocaleDateString("en-AU", {
+    day: "numeric",
+    month: "short",
+    year: date.getFullYear() === now.getFullYear() ? undefined : "numeric",
+  });
+}

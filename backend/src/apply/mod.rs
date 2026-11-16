@@ -233,6 +233,7 @@ pub async fn start(
     };
     let cover_letter_id = approved(&state.db, &job_id, "cover_letter").await?;
     let start_url = apply_url.unwrap_or(job_url);
+    crate::tracker::track(&state.db, &job_id).await?;
     create(
         &state,
         &job_id,
@@ -468,6 +469,11 @@ pub async fn submitted(
         "You submitted it.",
     )
     .await?;
+    let job_id: String = sqlx::query_scalar("SELECT job_id FROM applications WHERE id = $1")
+        .bind(id)
+        .fetch_one(&state.db)
+        .await?;
+    crate::tracker::mark_submitted(&state.db, &job_id).await?;
     get(State(state), Path(id)).await
 }
 

@@ -171,6 +171,7 @@ export type Settings = {
   apply_think: boolean;
   /** A second model call checks the agent's answers before they go in. */
   apply_review: boolean;
+  auto_approve: boolean;
   updated_at: string;
 };
 
@@ -566,6 +567,53 @@ export type SeekDeleted = { deleted: string[]; failed: string[] };
 
 export type PdfCheck = { pages: number; left_out: string[] };
 
+/** A board column. Ready, Applying and Your turn are worked out; you set the rest. */
+export type Column =
+  | "ready"
+  | "applying"
+  | "your_turn"
+  | "submitted"
+  | "interview"
+  | "offer"
+  | "rejected"
+  | "withdrawn";
+
+/** The columns you can move a card to yourself. */
+export type Stage = "submitted" | "interview" | "offer" | "rejected" | "withdrawn";
+
+export type Card = {
+  job_id: string;
+  title: string;
+  company: string | null;
+  location: string | null;
+  apply_type: string | null;
+  score: number | null;
+  column: Column;
+  detail: string;
+  application_id: string | null;
+  applied_at: string | null;
+  replied_at: string | null;
+  updated_at: string;
+  created_at: string;
+};
+
+export type OneClick = { started: "applying" | "drafting" | "waiting_for_you" };
+export type BulkResult = { started: number; skipped: { job_id: string; reason: string }[] };
+
+export type DayCount = { day: string; count: number };
+export type Breakdown = { label: string; applied: number; replied: number; interviews: number };
+
+export type Insights = {
+  per_day: DayCount[];
+  per_week: DayCount[];
+  funnel: { applied: number; replied: number; interview: number; offer: number; rejected: number };
+  response_rate: number | null;
+  median_days_to_reply: number | null;
+  by_score: Breakdown[];
+  by_apply_type: Breakdown[];
+  by_source: Breakdown[];
+};
+
 export type AnswerSubmission = { question_id: string; answer: string; save: boolean };
 
 // ---------- Endpoints ----------
@@ -644,3 +692,9 @@ export const focusApplication = (id: string) => apiSend<void>("POST", `/api/appl
 export const openInAgentBrowser = (url: string) => apiSend<void>("POST", "/api/browser/open", { url });
 export const runEventsUrl = (id: string, after: number) =>
   `${API_URL}/api/applications/${id}/events?after=${after}`;
+export const oneClickApply = (jobId: string) =>
+  apiSend<OneClick>("POST", `/api/jobs/${encodeURIComponent(jobId)}/one-click`);
+export const bulkApply = (jobIds: string[]) => apiSend<BulkResult>("POST", "/api/apply/bulk", { job_ids: jobIds });
+export const moveCard = (jobId: string, stage: Stage) =>
+  apiSend<Card>("PUT", `/api/tracker/${encodeURIComponent(jobId)}`, { stage });
+export const removeCard = (jobId: string) => apiSend<void>("DELETE", `/api/tracker/${encodeURIComponent(jobId)}`);
