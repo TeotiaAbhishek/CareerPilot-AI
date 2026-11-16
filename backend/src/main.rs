@@ -145,6 +145,7 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
     };
     // One-click Apply: moves jobs from "resume drafted" to "agent applying".
     careerpilot_api::tracker::spawn_supervisor(state.clone());
+    careerpilot_api::emails::spawn_planner(state.clone());
     let app = build_app(state, &config.web_origin);
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

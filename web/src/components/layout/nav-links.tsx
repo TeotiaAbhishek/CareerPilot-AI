@@ -2,14 +2,28 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 
+import { useApi } from "@/hooks/use-api";
+import type { Email } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 import { NAV_ITEMS, isActive } from "./nav-items";
 
 /** The list of links. Client component because it reads the current URL. */
+const DUE_POLL_MS = 60_000;
+
 export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+
+  // Emails due, shown next to Applications. Checked once a minute.
+  const due = useApi<Email[]>("/api/emails/due");
+  const { reload } = due;
+  useEffect(() => {
+    const timer = setInterval(reload, DUE_POLL_MS);
+    return () => clearInterval(timer);
+  }, [reload]);
+  const counts: Record<string, number> = { "/applications": due.data?.length ?? 0 };
 
   return (
     <nav aria-label="Main" className="flex flex-col gap-1">
@@ -30,6 +44,14 @@ export function NavLinks({ onNavigate }: { onNavigate?: () => void }) {
           >
             <Icon className="size-4" aria-hidden />
             {label}
+            {counts[href] ? (
+              <span
+                className="ml-auto rounded-full bg-warning/15 px-2 text-xs font-semibold text-warning tabular-nums"
+                aria-label={`${counts[href]} emails due`}
+              >
+                {counts[href]}
+              </span>
+            ) : null}
           </Link>
         );
       })}

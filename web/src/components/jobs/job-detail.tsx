@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 
 import { ApplyPanel } from "@/components/applications/apply-panel";
 import { PreparePanel } from "@/components/documents/prepare-panel";
+import { EmailPanel } from "@/components/emails/email-panel";
 
 import { ScoreBadge } from "./score-badge";
 import { ScorePanel } from "./score-panel";
@@ -241,6 +242,8 @@ export function JobDetailView({
         applyType={current.apply_type}
         onStarted={() => setDocsVersion((v) => v + 1)}
       />
+
+      <EmailPanel jobId={current.id} />
 
       {current.scrape_status === "failed" ? (
         <div className="m-6 mb-0 flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4 text-sm">

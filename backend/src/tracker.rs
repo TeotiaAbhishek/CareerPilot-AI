@@ -484,6 +484,7 @@ struct CardRow {
     resume_status: Option<String>,
     resume_open_errors: Option<i64>,
     application_id: Option<Uuid>,
+    emails_due: i64,
     run_status: Option<String>,
     manual_reason: Option<String>,
     run_updated_at: Option<DateTime<Utc>>,
@@ -501,6 +502,8 @@ pub struct Card {
     /// What's happening, in one line.
     pub detail: String,
     pub application_id: Option<Uuid>,
+    /// Email drafts (follow-ups, a thank-you) ready for you to send.
+    pub emails_due: i64,
     pub applied_at: Option<DateTime<Utc>>,
     pub replied_at: Option<DateTime<Utc>>,
     /// When it last moved (or the run last changed, before Submit).
@@ -514,7 +517,9 @@ macro_rules! cards {
         coalesce(s.score, l.relevance_score) AS score,
         t.stage, t.one_click, t.note, t.applied_at, t.replied_at, t.stage_changed_at, t.created_at,
         d.status AS resume_status, d.open_errors AS resume_open_errors,
-        a.id AS application_id, a.status AS run_status, a.manual_reason, a.updated_at AS run_updated_at
+        a.id AS application_id, a.status AS run_status, a.manual_reason, a.updated_at AS run_updated_at,
+        (SELECT count(*) FROM emails e WHERE e.job_id = t.job_id AND e.status = 'ready'
+                                         AND e.due_at <= now()) AS emails_due
     FROM tracker t
     JOIN jobs j ON j.id = t.job_id
     LEFT JOIN legacy_job_analysis l ON l.job_id = t.job_id
@@ -571,6 +576,7 @@ fn card(r: CardRow) -> Card {
         column,
         detail,
         application_id: r.application_id,
+        emails_due: r.emails_due,
         applied_at: r.applied_at,
         replied_at: r.replied_at,
         updated_at,
@@ -612,6 +618,10 @@ pub async fn update(
         return Err(AppError::NotFound("Job not found.".into()));
     }
     move_to(&state.db, &job_id, &input.stage).await?;
+    // A move to Interview plans a thank-you; moving on cancels follow-ups.
+    if crate::emails::plan(&state.db).await? > 0 {
+        state.drafter.wake();
+    }
     one_card(&state.db, &job_id).await.map(Json)
 }
 

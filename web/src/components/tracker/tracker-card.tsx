@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, Send, Zap } from "lucide-react";
+import { Loader2, Mail, Send, Zap } from "lucide-react";
 import Link from "next/link";
 
 import { Badge } from "@/components/ui/badge";
@@ -59,6 +59,15 @@ export function TrackerCard({
           card.detail
         )}
       </p>
+      {card.emails_due > 0 ? (
+        <Link
+          href={`/jobs/${encodeURIComponent(card.job_id)}#emails`}
+          className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-warning/10 px-2 py-1 text-xs font-medium text-warning hover:bg-warning/20"
+        >
+          <Mail className="size-3" aria-hidden />
+          {card.emails_due === 1 ? "Email ready to send" : `${card.emails_due} emails ready to send`}
+        </Link>
+      ) : null}
       <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
         {card.score !== null ? (
           <Badge className="py-0 tabular-nums" title="Relevance score">

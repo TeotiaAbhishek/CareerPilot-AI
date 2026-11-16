@@ -13,6 +13,7 @@ const card = (patch: Partial<Card>): Card => ({
   column: "ready",
   detail: "",
   application_id: null,
+  emails_due: 0,
   applied_at: null,
   replied_at: null,
   updated_at: "2026-11-16T00:00:00Z",
