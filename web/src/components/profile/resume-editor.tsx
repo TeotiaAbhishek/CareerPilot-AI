@@ -75,7 +75,7 @@ export function ResumeEditor() {
           <div>
             <CardTitle>Master resume</CardTitle>
             <CardDescription>
-              Markdown. The scoring model reads this; in F5 tailored resumes are built from it.
+              Markdown. The scoring model reads this, and tailored resumes are built from it.
             </CardDescription>
           </div>
           <div className="flex items-center gap-2">

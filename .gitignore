@@ -1,79 +1,42 @@
 # ============================================================
-# CareerPilot-AI
+# CareerPilot
 # ============================================================
 
-# Environment variables / secrets
+# Secrets and local settings: backend/.env holds VAULT_KEY and Gmail keys.
 .env
 .env.*
 !.env.example
 
-# Python virtual environments
+# Your own files. Never commit them: the repo is public.
+/data/
+/private/
+# Left over from v1 (Google credentials and tokens live here). Never commit.
+/config/
 .venv/
-venv/
-env/
-ENV/
-
-# Python cache / compiled files
 __pycache__/
-*.py[cod]
-*$py.class
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
+.streamlit/
 
-# IDE / editor files
+# Rust build output
+target/
+
+# Node
+node_modules/
+.next/
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+*.tmp
+
+# Generated documents
+*.pdf
+*.docx
+
+# Editors and OS files
 .vscode/
 .idea/
 *.swp
-*.swo
-
-# OS files
 .DS_Store
 Thumbs.db
-
-# Local databases
-*.db
-*.sqlite
-*.sqlite3
-
-# Google OAuth credentials / tokens
-config/google_credentials.json
-config/google_token.json
-credentials.json
-token.json
-
-# Streamlit secrets
-.streamlit/secrets.toml
-
-# Logs
-*.log
-logs/
-
-# Temporary / generated files
-tmp/
-temp/
-*.tmp
-
-# Generated documents / exports
-*.pdf
-*.docx
-*.doc
-*.odt
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Build / package artefacts
-build/
-dist/
-*.egg-info/
-
-# Node artefacts
-node_modules/
-
-# Miscellaneous
 *~
-# Rust build output (CareerPilot v2 backend)
-target/

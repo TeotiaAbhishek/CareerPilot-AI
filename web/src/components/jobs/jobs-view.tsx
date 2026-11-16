@@ -163,7 +163,7 @@ export function JobsView() {
               <EmptyState
                 icon={Briefcase}
                 title="No jobs yet"
-                description="Click “Scrape now” to search SEEK, or import your v1 jobs (see the F2 guide)."
+                description="Click “Scrape now” to search SEEK with the searches on the Settings page."
               />
             )
           ) : (

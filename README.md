@@ -1,207 +1,119 @@
-# CareerPilot AI
+# CareerPilot
 
-CareerPilot AI is a personal job-search automation platform that discovers relevant data roles, evaluates job fit against a master resume, generates tailored application documents, and provides a Streamlit interface for reviewing and managing applications.
+A self-hosted job-search assistant that runs on your own computer. It finds jobs on SEEK, scores how well each one fits you with a local model, drafts a tailored resume from your real experience, fills in application forms in its own browser, and keeps track of everything until you hear back.
 
-> **CareerPilot v2 is being built** in `backend/` (Rust) and `web/` (Next.js), next to the current Python app, which keeps running until v2 reaches parity.
->
-> **Run v2 locally:**
-> 1. `docker compose up -d` (Postgres + pgvector on port 5433)
-> 2. `cd backend && cp .env.example .env && cargo run` (API on http://localhost:8080)
-> 3. `cd web && cp .env.example .env.local && npm install && npm run dev` (UI on http://localhost:3000)
+**You stay in control:** the agent never clicks Submit, never solves a CAPTCHA and never sends an email. Your data stays in your database, and your contact details never go to the model.
 
-## Features
+![Dashboard](docs/images/dashboard.png)
 
-- Scrapes configured SEEK searches for new jobs
-- Stores job data and analysis in Supabase Postgres
-- Uses OpenAI to score professional relevance
-- Separates professional fit from eligibility constraints
-- Generates tailored resumes and cover letters on demand
-- Converts generated Markdown into formatted DOCX documents
-- Publishes Google Docs and PDF copies to Google Drive
-- Provides a Streamlit dashboard for reviewing jobs and documents
-- Tracks applied jobs and removes them from the active queue
-- Supports a scheduled local daily pipeline with email success/failure reports
+## What it does
 
-## Architecture
+| | |
+|---|---|
+| **Find** | Scrapes your SEEK searches every morning and keeps every job, with full-text search and filters |
+| **Score** | A local model (Ollama, qwen3:14b by default) scores each job 0-100 against your resume, with matched and missing requirements and hard blockers such as citizenship. An Evals page measures it against your own labels |
+| **Tailor** | Drafts a resume (and a cover letter when asked) for a job. Every line cites the part of your resume it comes from, and a checker flags anything your resume doesn't back up. Download as .docx or a one-page PDF |
+| **Apply** | A Playwright browser agent fills in SEEK Quick Apply and employer forms, signs in or signs up (passwords in an encrypted vault, email codes read from Gmail), asks you what it can't answer, and stops before Submit |
+| **Track** | A board from Ready to Offer, one-click Apply for many jobs at once, and Insights: applications per week, response rate, and what gets replies |
+| **Follow up** | Drafts follow-ups at 7 and 14 days and a thank-you after an interview, ready to open in Gmail |
+| **Ask** | A chat assistant with read-only tools over your jobs, scores, board and resume: "Which jobs should I apply to first?", "What skill keeps coming up missing?" |
 
-```text
-CareerPilot-AI/
-├── app/
-│   └── app.py
-├── config/
-│   ├── candidate_profile.yaml
-│   ├── searches.yaml
-│   ├── google_credentials.json
-│   └── google_token.json
-├── data/
-│   └── master_resume.md
-├── src/
-│   ├── __init__.py
-│   ├── config.py
-│   ├── database.py
-│   ├── scraper/
-│   │   ├── __init__.py
-│   │   ├── seek_scraper.py
-│   │   └── run_scraper.py
-│   ├── intelligence/
-│   │   ├── __init__.py
-│   │   ├── relevance.py
-│   │   ├── document_generator.py
-│   │   └── document_formatter.py
-│   └── integrations/
-│       ├── __init__.py
-│       ├── emailer.py
-│       └── google_drive.py
-├── .env.example
-├── .gitignore
-├── requirements.txt
-├── run_daily.py
-└── README.md
-```
+| Job | Applications |
+|---|---|
+| ![A scored job](docs/images/job.png) | ![The board](docs/images/applications.png) |
+| **Insights** | **Ask** |
+| ![Insights](docs/images/insights.png) | ![Ask](docs/images/ask.png) |
 
-## Tech Stack
+*Screenshots use a made-up person and made-up companies.*
 
-- Python 3.11
-- Streamlit
-- Supabase Postgres
-- OpenAI API
-- BeautifulSoup / Requests
-- Pydantic
-- Google Drive API
-- python-docx
-- PyYAML
-
-## Setup
-
-Clone the repository and create a virtual environment:
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Create your local environment file:
-
-```bash
-cp .env.example .env
-```
-
-Then populate `.env` with your own database, OpenAI, and email credentials.
-
-## Configuration
-
-Job-search settings are defined in:
+## How it fits together
 
 ```text
-config/searches.yaml
+ Browser / phone ──► web (Next.js, :3000) ──/api──► API (Rust, axum, 127.0.0.1:8080) ──► Postgres (Docker, :5433)
+                                                     │        │
+                                                     │        └──► Ollama (local model, :11434)
+                                                     └──► browser worker (Playwright, 127.0.0.1:8090) ──► Chromium window
 ```
 
-Candidate eligibility and job-search constraints are defined in:
+- **`backend/`**: Rust (axum, sqlx). The API, the scraper, and the workers for scoring, drafting, applying and emails. Every model call goes through one `LlmClient`, so another provider can be added in `backend/src/llm/`.
+- **`web/`**: Next.js and Tailwind. All pages, and the `/api` pass-through to the backend.
+- **`browser-worker/`**: TypeScript and Playwright. Drives a real Chromium window with its own profile, so you can watch it and step in.
 
-```text
-config/candidate_profile.yaml
-```
+## Requirements
 
-The resume used as the source of truth for relevance analysis and document generation is:
+- Ubuntu 24.04, natively or in WSL2 on Windows (WSLg shows the agent's browser window)
+- Docker (Docker Desktop with WSL integration, or Docker Engine)
+- Rust (stable, from [rustup.rs](https://rustup.rs)) and Node.js 22.18 or newer
+- [Ollama](https://ollama.com) and a GPU with about 12 GB of memory for qwen3:14b (qwen3:8b works with less)
 
-```text
-data/master_resume.md
-```
-
-Google OAuth files are stored locally as:
-
-```text
-config/google_credentials.json
-config/google_token.json
-```
-
-These files are excluded from Git.
-
-## Run the Application
-
-Start the Streamlit interface:
+## Quick start
 
 ```bash
-python -m streamlit run app/app.py
+git clone https://github.com/TeotiaAbhishek/CareerPilot-AI.git ~/code/careerpilot-ai
+cd ~/code/careerpilot-ai
+scripts/setup.sh     # once: database, settings files, vault key, builds, Chromium, the model
+scripts/dev.sh       # API, web app and browser worker together. Ctrl+C stops them
 ```
 
-Run the job scraper:
+Open http://localhost:3000, then:
+1. **Profile:** paste your resume (Markdown) and fill in your work rights.
+2. **Settings:** add your SEEK searches, and click **Sign in to SEEK in the agent's browser** once.
+3. **Jobs:** click **Scrape now**. Scores appear as the model gets through them.
+
+`scripts/setup.sh` creates `backend/.env` with a new `VAULT_KEY`. **Back it up and never commit it.** Without it, saved passwords can't be decrypted.
+
+## Keep it always on, and use it from your phone
 
 ```bash
-python -m src.scraper.run_scraper
+scripts/install-services.sh
 ```
 
-Run relevance analysis:
+This runs the API, the web app and the browser worker as systemd user services. They start with Ubuntu and restart if they crash. Run it again after pulling new code. `scripts/install-services.sh --remove` undoes it.
+
+On Windows, also make sure WSL and Docker start when you sign in:
+- **Docker Desktop:** Settings → General → *Start Docker Desktop when you sign in*.
+- **WSL:** Task Scheduler → *Create Task* → trigger *At log on* → action `wsl.exe` with arguments `-d Ubuntu-24.04 --exec sleep infinity`, *Hidden*.
+- **Sleep:** Settings → System → Power → *never sleep when plugged in*.
+
+**From your phone:** install [Tailscale](https://tailscale.com) in Ubuntu and on your phone (same account), then:
 
 ```bash
-python -m src.intelligence.relevance
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up
+sudo tailscale serve --bg 3000
 ```
 
-Generate a tailored resume:
+`tailscale serve` prints an `https://<your-pc>.<tailnet>.ts.net` address. It works on your own signed-in devices only, never on the public internet. **The app has no login page, so never expose it publicly.**
+
+## Settings
+
+`backend/.env` (made from `backend/.env.example`):
+
+| Variable | What it is |
+|---|---|
+| `DATABASE_URL` | Postgres. The Docker one is on port 5433 |
+| `SCRAPE_DAILY_AT`, `SCRAPE_TIMEZONE` | When the daily scrape runs, or `off` |
+| `OLLAMA_URL`, `OLLAMA_NUM_CTX` | Where Ollama runs, and its default context size |
+| `VAULT_KEY` | The password vault key. Created by `setup.sh` |
+| `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` | Optional: a Google OAuth "Desktop app" client with the Gmail API, for sign-up codes (read-only) |
+| `RESUME_PATH` | Optional: a Markdown resume to import on first start. `data/` is git-ignored |
+
+Models, the relevance threshold, how many applications run at once, the daily limit and the other switches are on the **Settings** page.
+
+## Development
 
 ```bash
-python -m src.intelligence.document_generator resume <job_id>
+cd backend && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+cd web && npm run lint && npm run typecheck && npm test
+cd browser-worker && npm run typecheck && npm test
 ```
 
-Generate a tailored cover letter:
-
-```bash
-python -m src.intelligence.document_generator cover <job_id>
-```
-
-Publish an existing generated document to Google Drive:
-
-```bash
-python -m src.integrations.google_drive resume <job_id>
-```
-
-or:
-
-```bash
-python -m src.integrations.google_drive cover <job_id>
-```
-
-Run the full daily pipeline:
-
-```bash
-python run_daily.py
-```
-
-## Daily Pipeline
-
-The automated workflow runs:
-
-```text
-SEEK discovery
-    ↓
-Supabase storage
-    ↓
-OpenAI relevance analysis
-    ↓
-Relevant jobs available in Streamlit
-    ↓
-Resume / cover letter generation on demand
-    ↓
-Google Docs + PDF publishing
-    ↓
-Application tracking
-```
-
-The daily worker can be scheduled locally, while the Streamlit interface can be deployed separately.
+The backend tests need Postgres (`docker compose up -d`) and use a fake Ollama and a fake browser worker, so they never call a real model or website. CI runs all of this on every pull request.
 
 ## Security
 
-Sensitive files and credentials are excluded from version control, including:
+See [SECURITY.md](SECURITY.md): what's encrypted, what the model sees, what the agent will never do, and how to report a problem.
 
-- `.env`
-- `.venv/`
-- Google OAuth credentials and tokens
-- Streamlit secrets
-- logs and generated documents
+## Licence
 
-Use `.env.example` as the template for local configuration.
-
-## Status
-
-CareerPilot AI V1 is functional end to end and includes job discovery, relevance scoring, document generation, Google Drive publishing, application tracking, and scheduled pipeline reporting.
+[MIT](LICENSE)
