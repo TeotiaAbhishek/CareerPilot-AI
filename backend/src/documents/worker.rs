@@ -16,7 +16,10 @@ use uuid::Uuid;
 use super::{
     Kind,
     check::{CheckContext, note_flags},
-    draft::{LetterAnswer, ResumeAnswer, arrange_skills, assemble_letter, assemble_resume},
+    draft::{
+        LetterAnswer, ResumeAnswer, arrange_skills, assemble_letter, assemble_resume,
+        keep_job_bullets,
+    },
     prompt::{
         JobForPrompt, LETTER_SYSTEM, LETTER_TASK, PROMPT_VERSION, RESUME_SYSTEM, letter_schema,
         resume_schema, resume_task, user_prompt,
@@ -390,6 +393,9 @@ pub(crate) async fn write_document(
             let pages = settings::load(db).await.map_or(2, |s| s.resume_pages);
             let job_text = format!("{} {description}", job.title);
             arrange_skills(&mut draft, &master, &job_text, pages >= 2);
+            if pages >= 2 {
+                keep_job_bullets(&mut draft, &master);
+            }
             let mut flags = check.check_resume(&draft);
             flags.extend(note_flags(&notes));
             (serde_json::to_value(draft).expect("serialisable"), flags)
