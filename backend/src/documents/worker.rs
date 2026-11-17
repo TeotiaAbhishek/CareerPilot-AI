@@ -16,10 +16,10 @@ use uuid::Uuid;
 use super::{
     Kind,
     check::{CheckContext, note_flags},
-    draft::{LetterAnswer, ResumeAnswer, assemble_letter, assemble_resume},
+    draft::{LetterAnswer, ResumeAnswer, add_job_skills, assemble_letter, assemble_resume},
     prompt::{
-        JobForPrompt, LETTER_SYSTEM, LETTER_TASK, PROMPT_VERSION, RESUME_SYSTEM, RESUME_TASK,
-        letter_schema, resume_schema, user_prompt,
+        JobForPrompt, LETTER_SYSTEM, LETTER_TASK, PROMPT_VERSION, RESUME_SYSTEM, letter_schema,
+        resume_schema, resume_task, user_prompt,
     },
     resume::MasterResume,
 };
@@ -345,10 +345,13 @@ pub(crate) async fn write_document(
         missing: &missing,
     };
     let (system, task_text, schema) = match kind {
-        Kind::Resume => (RESUME_SYSTEM, RESUME_TASK, resume_schema()),
-        Kind::CoverLetter => (LETTER_SYSTEM, LETTER_TASK, letter_schema()),
+        Kind::Resume => {
+            let pages = settings::load(db).await.map_or(2, |s| s.resume_pages);
+            (RESUME_SYSTEM, resume_task(pages), resume_schema())
+        }
+        Kind::CoverLetter => (LETTER_SYSTEM, LETTER_TASK.to_string(), letter_schema()),
     };
-    let user = user_prompt(&master, &job_for_prompt, note, task_text);
+    let user = user_prompt(&master, &job_for_prompt, note, &task_text);
 
     let started = Instant::now();
     let answer = llm
@@ -383,7 +386,8 @@ pub(crate) async fn write_document(
     let (content, flags) = match kind {
         Kind::Resume => {
             let answer: ResumeAnswer = serde_json::from_value(value).map_err(bad_schema)?;
-            let (draft, notes) = assemble_resume(&master, answer);
+            let (mut draft, notes) = assemble_resume(&master, answer);
+            add_job_skills(&mut draft, &master, &format!("{} {description}", job.title));
             let mut flags = check.check_resume(&draft);
             flags.extend(note_flags(&notes));
             (serde_json::to_value(draft).expect("serialisable"), flags)

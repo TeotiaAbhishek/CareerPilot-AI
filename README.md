@@ -11,7 +11,7 @@ A self-hosted job-search assistant that runs on your own computer. It finds jobs
 | | |
 |---|---|
 | **Find** | Scrapes your SEEK searches every morning and keeps every job, with full-text search and filters |
-| **Score** | A local model (Ollama, qwen3:14b by default), Claude or OpenAI scores each job 0-100 against your resume, with matched and missing requirements and hard blockers such as citizenship. Roles above your experience (a lead role when you have 3 years) are capped. An Evals page measures every model against your own labels, with cost and time |
+| **Score** | A model (GPT-6 Luna by default, Claude, or a local Ollama model) scores each job 0-100 against your resume, with matched and missing requirements and hard blockers such as citizenship. Roles above your experience (a lead role when you have 3 years) are capped. An Evals page measures every model against your own labels, with cost and time |
 | **Tailor** | Drafts a resume (and a cover letter when asked) for a job. Every line cites the part of your resume it comes from, and a checker flags anything your resume doesn't back up. Download as .docx or a one-page PDF |
 | **Apply** | A Playwright browser agent fills in SEEK Quick Apply and employer forms, signs in or signs up (passwords in an encrypted vault, email codes read from Gmail), asks you what it can't answer, and stops before Submit |
 | **Track** | A board from Ready to Offer, one-click Apply for many jobs at once, and Insights: applications per week, response rate, and what gets replies |
@@ -107,18 +107,19 @@ What they see: the job ad and your resume **without** your name, email, phone or
 
 ![Evals](docs/images/evals.png)
 
-Results on my own 40 labelled jobs:
+Results on my own labels: 20 jobs from one week scored by each model (a job counts as "relevant" at 60+), and tailored resumes for 5 of them:
 
-| Task | Model | Agreement with my labels | Flags per resume | Cost | Time |
-|---|---|---|---|---|---|
-| Scoring | `qwen3:14b` (local) | TBD | | free | TBD |
-| Scoring | `claude-haiku-5-5` | TBD | | TBD | TBD |
-| Scoring | `gpt-6-luna` | TBD | | TBD | TBD |
-| Tailoring | `qwen3:14b` (local) | | TBD | free | TBD |
-| Tailoring | `claude-sonnet-5-5` | | TBD | TBD | TBD |
-| Tailoring | `gpt-6.1-sol` | | TBD | TBD | TBD |
+| Task | Model | Agreement with my labels | Recall | Flags per resume | Cost per job | Time per job |
+|---|---|---|---|---|---|---|
+| Scoring | `qwen3:14b` (local), first prompt | 76% | 100% | | free | 66.7 s |
+| Scoring | `qwen3:14b` (local), `v2-seniority` | **88%** | 78% | | free | 9.4 s |
+| Scoring | `claude-haiku-5-5` | 59% | 22% | | $0.0011 | 3.5 s |
+| Scoring | `gpt-6-luna` | 65% | 33% | | $0.00059 | 5.1 s |
+| Tailoring | `qwen3:14b` (local) | | | 15.8 | free | 72 s |
+| Tailoring | `claude-sonnet-5-5` | | | **4.4** | $0.03 | 11 s |
+| Tailoring | `gpt-6.1-sol` | | | 13.6 | $0.02 | 21 s |
 
-I use TBD for scoring and TBD for tailoring.
+This is a first, small run (20 labels picked in a hurry), so the scoring numbers are rough; I'll redo it with more labels. I score with `gpt-6-luna` and tailor resumes and run Ask with `claude-sonnet-5-5`. These are the defaults on a fresh install; without an API key, each falls back to the local model.
 
 ## Settings
 

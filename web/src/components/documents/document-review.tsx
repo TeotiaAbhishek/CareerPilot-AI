@@ -456,8 +456,9 @@ function Editor({
 }
 
 /**
- * How many pages the PDF comes to. A resume is fitted to one page: first
- * smaller, then the oldest bullets are left out, and those are listed here.
+ * How many pages the PDF comes to. A resume is fitted to your page limit
+ * (Settings): first smaller, then the oldest bullets are left out, and those
+ * are listed here.
  */
 function PageCount({ id, version }: { id: string; version: string }) {
   const { data, error } = useApi<PdfCheck>(`/api/documents/${id}/pdf-check?v=${encodeURIComponent(version)}`);
@@ -471,13 +472,13 @@ function PageCount({ id, version }: { id: string; version: string }) {
   if (!data) return <Loader2 className="size-3 animate-spin text-muted-foreground" aria-label="Counting pages" />;
   return (
     <>
-      <Badge tone={data.pages <= 1 ? "success" : "warning"}>
+      <Badge tone={data.left_out.length === 0 ? "success" : "warning"}>
         {data.pages} page{data.pages === 1 ? "" : "s"} as PDF
       </Badge>
       {data.left_out.length > 0 ? (
         <details className="basis-full text-xs text-muted-foreground">
           <summary className="cursor-pointer">
-            {data.left_out.length} line{data.left_out.length === 1 ? "" : "s"} left out of the PDF to fit one page
+            {data.left_out.length} line{data.left_out.length === 1 ? "" : "s"} left out of the PDF to fit your page limit
           </summary>
           <ul className="mt-1 list-disc pl-5">
             {data.left_out.map((line) => (

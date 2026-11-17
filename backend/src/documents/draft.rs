@@ -56,6 +56,9 @@ pub struct LetterDraft {
 
 #[derive(Debug, Deserialize)]
 pub struct ResumeAnswer {
+    /// One title from your headline line, e.g. "Data Engineer".
+    #[serde(default)]
+    pub headline: Option<String>,
     pub summary: Line,
     #[serde(default)]
     pub skills: Vec<SkillGroup>,
@@ -89,6 +92,16 @@ pub fn clean_text(text: &str) -> String {
         .replace('–', "-");
     let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
     joined.replace(",,", ",").replace(" ,", ",")
+}
+
+/// "Python (pandas, NumPy)" -> "python": the name without its details.
+fn base_name(skill: &str) -> String {
+    skill
+        .split(" (")
+        .next()
+        .unwrap_or(skill)
+        .trim()
+        .to_lowercase()
 }
 
 fn clean_line(line: Line) -> Line {
@@ -154,6 +167,68 @@ fn draft_entry(entry: &Entry, bullets: Vec<Line>) -> DraftEntry {
     }
 }
 
+/// Skills of yours the job ad names that the model left out go back in, in
+/// their own group from your resume. A model that trims the list hard
+/// (Claude did) can't drop "Python" from a job that asks for Python.
+pub fn add_job_skills(draft: &mut ResumeDraft, master: &MasterResume, job_text: &str) {
+    let job = format!(" {} ", job_text.to_lowercase());
+    let named = |skill: &str| {
+        let name = base_name(skill);
+        !name.is_empty()
+            && job.match_indices(&name).any(|(i, _)| {
+                let before = job[..i].chars().next_back();
+                let after = job[i + name.len()..].chars().next();
+                before.is_none_or(|c| !c.is_alphanumeric())
+                    && after.is_none_or(|c| !c.is_alphanumeric())
+            })
+    };
+    let shown = |draft: &ResumeDraft, skill: &str| {
+        draft
+            .skills
+            .iter()
+            .flat_map(|g| &g.items)
+            .any(|s| base_name(s) == base_name(skill))
+    };
+    for group in &master.skills {
+        for skill in &group.items {
+            if !named(skill) || shown(draft, skill) {
+                continue;
+            }
+            match draft.skills.iter_mut().find(|g| g.group == group.group) {
+                Some(g) => g.items.push(skill.clone()),
+                None => draft.skills.push(SkillGroup {
+                    group: group.group.clone(),
+                    items: vec![skill.clone()],
+                }),
+            }
+        }
+    }
+}
+
+/// Your contact lines with the headline cut to the one title the model
+/// picked for this job. A title that isn't one of yours becomes your first.
+fn resume_contact(master: &MasterResume, picked: Option<&str>) -> Vec<String> {
+    let mut contact = master.contact.clone();
+    if let Some((i, titles)) = master.headline() {
+        let wanted = picked.unwrap_or("").trim().to_lowercase();
+        let title = titles
+            .iter()
+            .find(|t| t.to_lowercase() == wanted)
+            .unwrap_or(&titles[0]);
+        contact[i] = title.clone();
+    }
+    contact
+}
+
+/// A letter's header has no headline, only your contact details.
+fn letter_contact(master: &MasterResume) -> Vec<String> {
+    let mut contact = master.contact.clone();
+    if let Some((i, _)) = master.headline() {
+        contact.remove(i);
+    }
+    contact
+}
+
 /// Build the draft. Returns the draft and notes about what code corrected
 /// (skills the model added that aren't yours, unknown entries).
 pub fn assemble_resume(master: &MasterResume, answer: ResumeAnswer) -> (ResumeDraft, Vec<String>) {
@@ -165,11 +240,11 @@ pub fn assemble_resume(master: &MasterResume, answer: ResumeAnswer) -> (ResumeDr
         let mut items: Vec<String> = Vec::new();
         for item in group.items {
             let wanted = item.trim().to_lowercase();
-            let found = master
-                .skills
-                .iter()
-                .flat_map(|g| &g.items)
-                .find(|s| s.to_lowercase() == wanted);
+            let all = || master.skills.iter().flat_map(|g| &g.items);
+            // "Python" also matches "Python (pandas, NumPy)", spelled as you wrote it.
+            let found = all()
+                .find(|s| s.to_lowercase() == wanted)
+                .or_else(|| all().find(|s| base_name(s) == base_name(&wanted)));
             match found {
                 Some(s) if !items.contains(s) => items.push(s.clone()),
                 Some(_) => {}
@@ -262,7 +337,7 @@ pub fn assemble_resume(master: &MasterResume, answer: ResumeAnswer) -> (ResumeDr
 
     let draft = ResumeDraft {
         name: master.name.clone(),
-        contact: master.contact.clone(),
+        contact: resume_contact(master, answer.headline.as_deref()),
         summary: clean_line(answer.summary),
         skills,
         experience,
@@ -280,7 +355,7 @@ pub fn assemble_resume(master: &MasterResume, answer: ResumeAnswer) -> (ResumeDr
 pub fn assemble_letter(master: &MasterResume, answer: LetterAnswer) -> LetterDraft {
     LetterDraft {
         name: master.name.clone(),
-        contact: master.contact.clone(),
+        contact: letter_contact(master),
         greeting: "Dear Hiring Manager,".into(),
         paragraphs: answer
             .paragraphs
@@ -330,7 +405,7 @@ mod tests {
 
     fn master() -> MasterResume {
         MasterResume::parse(
-            "# Jane\n\n## Skills\n\n* **Programming:** Python, SQL\n\n## Experience\n\n### Acme\n\n**Analyst**\n\n* Built reports.\n* Wrote SQL.\n\n### Beta\n\n* Did ETL.\n\n## Projects\n\n### One\n\n* Made a thing.\n\n### Two\n\n* Made another.\n",
+            "# Jane\n\n## Skills\n\n* **Programming:** Python (pandas, NumPy), SQL\n\n## Experience\n\n### Acme\n\n**Analyst**\n\n* Built reports.\n* Wrote SQL.\n\n### Beta\n\n* Did ETL.\n\n## Projects\n\n### One\n\n* Made a thing.\n\n### Two\n\n* Made another.\n",
         )
     }
 
@@ -345,10 +420,16 @@ mod tests {
     #[test]
     fn keeps_every_job_and_only_real_skills() {
         let answer = ResumeAnswer {
+            headline: None,
             summary: line("Analyst — SQL", &["S", "S", "[K1]"]),
             skills: vec![SkillGroup {
                 group: "Core".into(),
-                items: vec!["sql".into(), "Snowflake".into(), "SQL".into()],
+                items: vec![
+                    "sql".into(),
+                    "Snowflake".into(),
+                    "SQL".into(),
+                    "python".into(),
+                ],
             }],
             experience: vec![EntryAnswer {
                 id: "W1".into(),
@@ -373,7 +454,7 @@ mod tests {
             draft.skills,
             vec![SkillGroup {
                 group: "Core".into(),
-                items: vec!["SQL".into()]
+                items: vec!["SQL".into(), "Python (pandas, NumPy)".into()]
             }]
         );
         assert_eq!(
@@ -394,6 +475,7 @@ mod tests {
     #[test]
     fn falls_back_to_your_skills_and_projects() {
         let answer = ResumeAnswer {
+            headline: None,
             summary: line("x", &["S"]),
             skills: vec![],
             experience: vec![],
@@ -410,6 +492,7 @@ mod tests {
             "## Experience\n\n### Independent\n\n#### Lakehouse\n\n* Built it.\n\n#### Job app\n\n* Shipped it.\n* Tested it.\n",
         );
         let answer = ResumeAnswer {
+            headline: None,
             summary: line("x", &["S"]),
             skills: vec![],
             // The model mixes the order up and invents a group: code fixes both.
@@ -439,6 +522,61 @@ mod tests {
                 (Some("Job app"), "Tested the job app."),
                 (Some("Job app"), "Shipped the job app."),
             ]
+        );
+    }
+
+    #[test]
+    fn the_headline_is_cut_to_the_title_picked_for_the_job() {
+        let master = MasterResume::parse(
+            "# Jane\n\nData Scientist | Data Engineer\nSydney · jane@x.com\n\n## Experience\n\n### Acme\n\n* Built it.\n",
+        );
+        let answer = |headline: Option<&str>| ResumeAnswer {
+            headline: headline.map(String::from),
+            summary: line("x", &["S"]),
+            skills: vec![],
+            experience: vec![],
+            projects: vec![],
+        };
+        let (draft, _) = assemble_resume(&master, answer(Some("data engineer")));
+        assert_eq!(draft.contact, vec!["Data Engineer", "Sydney · jane@x.com"]);
+        // Not one of yours: your first title.
+        let (draft, _) = assemble_resume(&master, answer(Some("Head of AI")));
+        assert_eq!(draft.contact[0], "Data Scientist");
+        // A letter's header has no headline.
+        let letter = assemble_letter(&master, LetterAnswer { paragraphs: vec![] });
+        assert_eq!(letter.contact, vec!["Sydney · jane@x.com"]);
+    }
+
+    #[test]
+    fn skills_the_job_names_are_put_back() {
+        let master = MasterResume::parse(
+            "## Skills\n\n* **Programming:** Python (pandas, NumPy), SQL, R\n* **BI:** Power BI, Tableau\n",
+        );
+        let mut draft = ResumeDraft {
+            skills: vec![SkillGroup {
+                group: "Programming".into(),
+                items: vec!["SQL".into()],
+            }],
+            ..ResumeDraft::default()
+        };
+        add_job_skills(
+            &mut draft,
+            &master,
+            "You know Python, SQL and Power BI. Rust is a plus. Report to the CFO.",
+        );
+        assert_eq!(
+            draft.skills,
+            vec![
+                SkillGroup {
+                    group: "Programming".into(),
+                    items: vec!["SQL".into(), "Python (pandas, NumPy)".into()]
+                },
+                SkillGroup {
+                    group: "BI".into(),
+                    items: vec!["Power BI".into()]
+                },
+            ],
+            "R isn't matched inside other words, Tableau isn't named"
         );
     }
 }

@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::resume::{MasterResume, entry_line, skill_line};
 
 /// Bump when a prompt changes, so drafts record which prompt wrote them.
-pub const PROMPT_VERSION: &str = "v2-plain";
+pub const PROMPT_VERSION: &str = "v2-pages";
 
 /// Rules against text that reads as AI-written, from Wikipedia's "Signs of
 /// AI writing". Shared by resumes, cover letters and emails; `style.rs`
@@ -35,6 +35,7 @@ The EVIDENCE list is the ONLY source of truth about the candidate. Each item has
 Your goal: improve relevance, clarity and ATS keyword alignment while keeping every fact true.
 
 YOU MAY:
+- choose the headline: the ONE title from HEADLINE OPTIONS that best fits the job, copied exactly
 - rewrite the professional summary (2-3 sentences)
 - choose and order the skills most relevant to the job, grouped under short headings
 - rewrite, reorder or drop bullets under each job, to emphasise what the job asks for
@@ -57,7 +58,7 @@ CITATIONS:
     plain_writing!(),
     "
 STYLE:
-- Australian English. Concise, specific, ATS-friendly. About one page.
+- Australian English. Concise, specific, ATS-friendly. The TASK says how long.
 - Start bullets with a strong verb. No em dashes or en dashes.
 - Include every job id from the evidence under \"experience\" (you choose its bullets).
 - Return only JSON that matches the schema.");
@@ -174,11 +175,20 @@ pub fn user_prompt(
             )
         })
         .unwrap_or_default();
+    let headline = master
+        .headline()
+        .map(|(_, titles)| {
+            format!(
+                "HEADLINE OPTIONS\n================\n{}\n\n",
+                titles.join("; ")
+            )
+        })
+        .unwrap_or_default();
     format!(
         "EVIDENCE
 ========
 {evidence}
-TARGET JOB
+{headline}TARGET JOB
 ==========
 Title: {title}
 Company: {company}
@@ -208,8 +218,19 @@ TASK
     )
 }
 
-pub const RESUME_TASK: &str = "Tailor the resume for this job. Emphasise the strongest genuine matches. \
-Don't try to cover missing requirements by inventing experience. Cite evidence ids for every line.";
+/// The resume task, sized to fill `pages` pages (1 or 2).
+pub fn resume_task(pages: i32) -> String {
+    let length = if pages >= 2 {
+        "LENGTH: two full pages. Keep 4-6 bullets for each recent role and 2-3 for older ones, \
+include more of the relevant projects, and show most skill groups. Use the evidence: don't pad."
+    } else {
+        "LENGTH: one page. Keep 3-5 bullets for the most recent role and 2-3 for older ones."
+    };
+    format!(
+        "Tailor the resume for this job. Emphasise the strongest genuine matches. \
+Don't try to cover missing requirements by inventing experience. Cite evidence ids for every line.\n{length}"
+    )
+}
 
 pub const LETTER_TASK: &str = "Write the body of a tailored cover letter for this job. \
 Focus on the strongest genuine connections. Use measurable achievements where relevant. \
@@ -251,9 +272,10 @@ pub fn resume_schema() -> Value {
                 }
             },
             "experience": { "type": "array", "items": entry },
-            "projects": { "type": "array", "items": entry }
+            "projects": { "type": "array", "items": entry },
+            "headline": { "type": "string" }
         },
-        "required": ["summary", "skills", "experience", "projects"]
+        "required": ["headline", "summary", "skills", "experience", "projects"]
     })
 }
 
@@ -285,12 +307,14 @@ mod tests {
             matched: &[],
             missing: &["dbt".to_string()],
         };
-        let prompt = user_prompt(&master, &job, Some("focus on SQL"), RESUME_TASK);
+        let prompt = user_prompt(&master, &job, Some("focus on SQL"), &resume_task(2));
         assert!(prompt.contains("[K1] Programming: Python"));
         assert!(prompt.contains("[W1] Acme | Analyst"));
         assert!(prompt.contains("  [W1.1] Built reports."));
         assert!(prompt.contains("Missing requirements: dbt"));
         assert!(prompt.contains("focus on SQL"));
+        assert!(prompt.contains("LENGTH: two full pages"));
+        assert!(resume_task(1).contains("LENGTH: one page"));
         assert!(
             !prompt.contains("jane@example.com"),
             "contact details never go to the model"

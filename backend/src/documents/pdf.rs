@@ -1,7 +1,8 @@
 //! PDF versions of a resume and a cover letter, printed by the browser
-//! worker's headless Chromium. The resume is fitted to one page: printed a
-//! little smaller first, then, if it still runs over, the bullets that matter
-//! least (the last project's, then the oldest job's) are left out of the PDF.
+//! worker's headless Chromium. The resume is fitted to the pages you chose in
+//! Settings (1 or 2): printed a little smaller first, then, if it still runs
+//! over, the bullets that matter least (the last project's, then the oldest
+//! job's) are left out of the PDF.
 //! The draft itself isn't changed; the review page lists what was left out.
 
 use axum::{
@@ -28,7 +29,7 @@ use crate::{
 
 /// Print sizes to try, largest first. 0.88 is still easy to read.
 const SCALES: [f64; 3] = [1.0, 0.94, 0.88];
-/// Give up trimming after this many bullets: the PDF then has 2 pages.
+/// Give up trimming after this many bullets: the PDF then runs over.
 const MAX_TRIMS: usize = 12;
 /// Every job keeps at least this many bullets.
 const MIN_JOB_BULLETS: usize = 2;
@@ -37,7 +38,7 @@ pub struct Pdf {
     pub name: String,
     pub bytes: Vec<u8>,
     pub pages: u32,
-    /// Bullets left out to fit one page.
+    /// Bullets left out to fit the page limit.
     pub left_out: Vec<String>,
 }
 
@@ -67,7 +68,7 @@ async fn print(browser: &BrowserClient, html: &str, scale: f64) -> AppResult<(Ve
         .map_err(|e| AppError::Unavailable(format!("Couldn't make the PDF: {e}")))
 }
 
-/// A document as a PDF. Resumes are fitted to one page.
+/// A document as a PDF. Resumes are fitted to your page limit.
 pub async fn pdf_file(db: &PgPool, browser: &BrowserClient, id: Uuid) -> AppResult<Pdf> {
     let document = load(db, id).await?;
     let Some(content) = document.content.clone() else {
@@ -90,10 +91,13 @@ pub async fn pdf_file(db: &PgPool, browser: &BrowserClient, id: Uuid) -> AppResu
         Kind::Resume => {
             let mut draft: ResumeDraft = serde_json::from_value(content).map_err(broken)?;
             let name = file_name(&draft.name, Kind::Resume, "pdf");
+            let max_pages = crate::settings::load(db)
+                .await
+                .map_or(2, |s| s.resume_pages.max(1) as u32);
             let mut left_out = Vec::new();
             for scale in SCALES {
                 let (bytes, pages) = print(browser, &html::resume_html(&draft), scale).await?;
-                if pages <= 1 {
+                if pages <= max_pages {
                     return Ok(Pdf {
                         name,
                         bytes,
@@ -112,7 +116,7 @@ pub async fn pdf_file(db: &PgPool, browser: &BrowserClient, id: Uuid) -> AppResu
                     left_out.push(text);
                 }
                 let (bytes, pages) = print(browser, &html::resume_html(&draft), smallest).await?;
-                if pages <= 1 || done {
+                if pages <= max_pages || done {
                     return Ok(Pdf {
                         name,
                         bytes,
@@ -125,7 +129,7 @@ pub async fn pdf_file(db: &PgPool, browser: &BrowserClient, id: Uuid) -> AppResu
     }
 }
 
-/// Download as a PDF (the resume fitted to one page).
+/// Download as a PDF (the resume fitted to your page limit).
 pub async fn download(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -150,7 +154,7 @@ pub struct PdfCheck {
     pub left_out: Vec<String>,
 }
 
-/// How the PDF comes out: its pages, and any bullets left out to fit one page.
+/// How the PDF comes out: its pages, and any bullets left out to fit.
 pub async fn check(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
