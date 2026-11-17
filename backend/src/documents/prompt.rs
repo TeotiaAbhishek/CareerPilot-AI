@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::resume::{MasterResume, entry_line, skill_line};
 
 /// Bump when a prompt changes, so drafts record which prompt wrote them.
-pub const PROMPT_VERSION: &str = "v2-pages";
+pub const PROMPT_VERSION: &str = "v2-recruiter";
 
 /// Rules against text that reads as AI-written, from Wikipedia's "Signs of
 /// AI writing". Shared by resumes, cover letters and emails; `style.rs`
@@ -28,18 +28,22 @@ macro_rules! plain_writing {
 }
 pub(crate) use plain_writing;
 
-pub const RESUME_SYSTEM: &str = concat!("You are an expert resume writer tailoring an existing resume to one job.
+pub const RESUME_SYSTEM: &str = concat!("You are a technical recruiter with 25 years of experience hiring for data, analytics and AI roles. You are rewriting a candidate's resume for one job so that a recruiter shortlists it in a 30-second scan, and an ATS matches it.
 
 The EVIDENCE list is the ONLY source of truth about the candidate. Each item has an id in square brackets.
 
-Your goal: improve relevance, clarity and ATS keyword alignment while keeping every fact true.
+HOW A RECRUITER READS IT:
+- The top third decides: a headline and summary that say what the candidate does, and the strongest evidence for THIS job first.
+- One achievement per bullet: what was built or done, with which tools, and the result or number. About 15-30 words. Never merge facts from different evidence bullets into one long bullet.
+- Keep the substance. Rewording a bullet toward the job is good; deleting relevant work to save space is not. Follow the LENGTH in the TASK.
+- A complete skills list: every skill the experience mentions belongs there, the job's skills first.
+- Projects count as experience for a graduate. Keep the projects most relevant to the job, each with its own bullets.
 
 YOU MAY:
 - choose the headline: the ONE title from HEADLINE OPTIONS that best fits the job, copied exactly
 - rewrite the professional summary (2-3 sentences)
-- choose and order the skills most relevant to the job, grouped under short headings
+- order the skills so the job's ones come first (code adds back any you leave out)
 - rewrite, reorder or drop bullets under each job, to emphasise what the job asks for
-- choose the most relevant projects
 - use the job's wording where the evidence supports it
 
 YOU MUST NOT:
@@ -49,8 +53,8 @@ YOU MUST NOT:
 - exaggerate seniority or describe completed study as ongoing
 
 CITATIONS:
-- Every bullet and the summary must list the ids of the evidence it is based on.
-- Bullets under a job should cite that job's bullets (W1 bullets cite W1.x ids).
+- Every bullet and the summary must list the ids of the evidence it is based on, one id per array item.
+- A bullet under a job cites that job's bullet ids (W1.3), not the job's id (W1).
 - Some jobs list their bullets under subheadings (for example one project each). Code puts each bullet back under the subheading of the evidence it cites, so don't repeat the subheading's name at the start of a bullet.
 - If you can't support a statement with evidence, leave it out.
 
@@ -221,10 +225,12 @@ TASK
 /// The resume task, sized to fill `pages` pages (1 or 2).
 pub fn resume_task(pages: i32) -> String {
     let length = if pages >= 2 {
-        "LENGTH: two full pages. Keep 4-6 bullets for each recent role and 2-3 for older ones, \
-include more of the relevant projects, and show most skill groups. Use the evidence: don't pad."
+        "LENGTH: two full pages. For the most recent role, keep 3-5 bullets for each of the 3-5 projects \
+or subheadings most relevant to the job. Keep 4-5 bullets for the next role and 2-4 for older ones. \
+Use the evidence: don't pad."
     } else {
-        "LENGTH: one page. Keep 3-5 bullets for the most recent role and 2-3 for older ones."
+        "LENGTH: one page. Keep 2-3 bullets for each of the 2-3 most relevant projects or subheadings \
+of the most recent role, 3-4 for the next role and 2-3 for older ones."
     };
     format!(
         "Tailor the resume for this job. Emphasise the strongest genuine matches. \
