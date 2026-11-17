@@ -1,7 +1,7 @@
 "use client";
 
 import { Trash2, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import type { DraftEntry, DraftLine, LetterDraft, ResumeDraft } from "@/lib/api";
@@ -61,16 +61,20 @@ export function ResumeDraftEditor({
           ) : null}
         </div>
         {entry.bullets.map((bullet, b) => (
-          <DraftLineEditor
-            key={`${entry.id}-${b}`}
-            label={`${entry.heading} bullet ${b + 1}`}
-            line={bullet}
-            path={`${section}.${entry.id}.${b}`}
-            ctx={ctx}
-            onChange={(text) => setBullets(entry.bullets.map((l, i) => (i === b ? { ...l, text } : l)))}
-            onRemove={entry.bullets.length > 1 ? () => setBullets(entry.bullets.filter((_, i) => i !== b)) : undefined}
-            onMove={(d) => setBullets(move(entry.bullets, b, b + d))}
-          />
+          <Fragment key={`${entry.id}-${b}`}>
+            {bullet.group && bullet.group !== entry.bullets[b - 1]?.group ? (
+              <p className="-mb-1 text-sm font-medium text-muted-foreground">{bullet.group}</p>
+            ) : null}
+            <DraftLineEditor
+              label={`${entry.heading} bullet ${b + 1}`}
+              line={bullet}
+              path={`${section}.${entry.id}.${b}`}
+              ctx={ctx}
+              onChange={(text) => setBullets(entry.bullets.map((l, i) => (i === b ? { ...l, text } : l)))}
+              onRemove={entry.bullets.length > 1 ? () => setBullets(entry.bullets.filter((_, i) => i !== b)) : undefined}
+              onMove={(d) => setBullets(move(entry.bullets, b, b + d))}
+            />
+          </Fragment>
         ))}
       </div>
     );

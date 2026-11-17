@@ -174,6 +174,7 @@ mod tests {
                 .map(|i| Line {
                     text: format!("{heading} {i}"),
                     evidence: vec![],
+                    group: None,
                 })
                 .collect(),
             ..DraftEntry::default()

@@ -15,6 +15,7 @@ Please open a [GitHub security advisory](https://github.com/TeotiaAbhishek/Caree
 | Gmail | Read-only access (`gmail.readonly`), only to read sign-up codes. Emails are drafted in the app; you send them yourself |
 | Job ads | Stored as sanitised HTML (`ammonia`), so a script in an ad can't run in the app |
 | The model's answers | Shown as Markdown without raw HTML. Links only open when they point at an app page or `https://` |
+| Claude and OpenAI (optional) | Off until you add a key. They get the job ad and your resume with contact lines removed by code, never your details, passwords or form pages: the apply agent only runs on your local model. A monthly cap per provider stops runaway costs |
 | The Ask assistant | Its tools only read, and each one runs inside a `READ ONLY` database transaction |
 
 ## What the agent will never do
@@ -33,7 +34,7 @@ Please open a [GitHub security advisory](https://github.com/TeotiaAbhishek/Caree
 
 - Keep `backend/.env` private and backed up. Without `VAULT_KEY`, saved passwords can't be decrypted. Never paste it into a chat, an issue or a screenshot.
 - Keep your resume in the database (Profile page) or in the git-ignored `data/` folder, never anywhere else in the repo.
-- Gmail OAuth client ID and secret go only in `backend/.env`.
+- Gmail OAuth client ID and secret, and the Claude and OpenAI API keys, go only in `backend/.env`. If a key leaks, delete it in the provider's console and make a new one.
 
 ## Checks
 

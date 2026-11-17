@@ -70,3 +70,17 @@ export function inlineMarkdown(text: string): Segment[] {
   if (last < text.length) out.push({ text: text.slice(last) });
   return out;
 }
+
+/** Bullets split at each new subheading (a project inside a job), keeping each bullet's index. */
+export function bulletGroups(lines: DraftLine[]): { group?: string; items: { line: DraftLine; index: number }[] }[] {
+  const out: { group?: string; items: { line: DraftLine; index: number }[] }[] = [];
+  lines.forEach((line, index) => {
+    const last = out[out.length - 1];
+    if (!last || (line.group && line.group !== last.group)) {
+      out.push({ group: line.group, items: [{ line, index }] });
+    } else {
+      last.items.push({ line, index });
+    }
+  });
+  return out;
+}

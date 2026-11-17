@@ -21,6 +21,7 @@ import {
   startPractice,
   updateSettings,
 } from "@/lib/api";
+import { isLocalModel } from "@/lib/scoring";
 
 const POLL_MS = 5000;
 const CAPS = [3, 5, 10, 15, 20, 30, 50];
@@ -66,7 +67,10 @@ export function ApplySettings() {
 
   const s = status.data;
   const cfg = settings.data;
-  const models = cfg ? Array.from(new Set([cfg.apply_model, ...(scoring?.ollama.models ?? [])])).sort() : [];
+  // Local models only: form pages hold your details.
+  const models = cfg
+    ? Array.from(new Set([cfg.apply_model, ...(scoring?.ollama.models ?? []).filter(isLocalModel)])).sort()
+    : [];
 
   return (
     <Card>

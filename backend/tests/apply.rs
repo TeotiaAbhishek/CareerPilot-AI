@@ -639,6 +639,14 @@ async fn captcha_daily_limit_and_a_stopped_worker(db: PgPool) {
         .await
         .unwrap();
     assert_eq!(res.status(), 400);
+    // The apply agent never runs on a cloud model.
+    let res = http
+        .put(format!("{url}/api/settings"))
+        .json(&json!({ "apply_model": "claude-sonnet-5-5" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(res.status(), 400);
     let res = http
         .put(format!("{url}/api/settings"))
         .json(&json!({ "apply_daily_cap": 5 }))

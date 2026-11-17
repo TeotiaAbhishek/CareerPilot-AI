@@ -152,7 +152,7 @@ async fn drafts_checks_edits_approves_and_exports(db: PgPool) {
     assert_eq!(resume["content"]["name"], "Test Person");
     assert_eq!(
         resume["content"]["summary"]["text"],
-        "Data analyst - Python and SQL."
+        "Data analyst, Python and SQL."
     );
     assert_eq!(
         resume["content"]["experience"][0]["details"][0],

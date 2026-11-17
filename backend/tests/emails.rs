@@ -141,7 +141,7 @@ async fn follow_ups_are_planned_drafted_checked_and_sent(db: PgPool) {
     assert_eq!(email["status"], "ready");
     assert_eq!(email["to_address"], "careers@globex.com.au");
     assert_eq!(
-        email["subject"], "Data Analyst application - following up",
+        email["subject"], "Data Analyst application, following up",
         "no dashes"
     );
     let flags = email["flags"].as_array().unwrap();

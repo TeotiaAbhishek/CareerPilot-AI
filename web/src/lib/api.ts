@@ -216,12 +216,19 @@ export type EvalMetrics = {
   mean_score_no: number | null;
 };
 
+export type Provider = "ollama" | "claude" | "openai";
+
 export type EvalRow = {
-  source: "ollama" | "v1";
+  source: Provider;
   model: string;
   prompt_version: string;
   active: boolean;
   metrics: EvalMetrics;
+  /** Average US dollars per score; null for local models. */
+  avg_cost_usd: number | null;
+  avg_seconds: number | null;
+  /** Scores the seniority cap brought down. */
+  capped: number;
 };
 
 export type Disagreement = {
@@ -232,16 +239,66 @@ export type Disagreement = {
   score: number;
   blockers: number;
   summary: string;
-  v1_score: number | null;
 };
 
 export type EvalReport = {
   threshold: number;
   active_model: string;
   prompt_version: string;
+  /** Only labelled jobs listed this recently count, e.g. "7 days". */
+  window: string;
   labels: { apply: number; maybe: number; no: number; total: number };
   rows: EvalRow[];
   disagreements: Disagreement[];
+};
+
+export type ProviderUsage = {
+  provider: "claude" | "openai";
+  key_set: boolean;
+  monthly_cap_usd: number;
+  spent_this_month_usd: number;
+  calls_this_month: number;
+};
+
+export type ModelPrice = {
+  id: string;
+  provider: "claude" | "openai";
+  input_per_mtok: number;
+  output_per_mtok: number;
+};
+
+export type LlmUsage = { providers: ProviderUsage[]; models: ModelPrice[] };
+
+export type CompareCell = {
+  id: string;
+  job_id: string;
+  model: string;
+  status: "queued" | "drafting" | "ready" | "failed";
+  flags: number;
+  words: number | null;
+  duration_ms: number | null;
+  cost_usd: number | null;
+  error: string | null;
+};
+
+export type CompareSummary = {
+  model: string;
+  done: number;
+  failed: number;
+  avg_flags: number | null;
+  avg_words: number | null;
+  avg_seconds: number | null;
+  total_cost_usd: number;
+};
+
+export type CompareBatch = {
+  batch_id: string;
+  created_at: string;
+  running: boolean;
+  jobs: { id: string; title: string; company: string | null }[];
+  models: string[];
+  cells: CompareCell[];
+  summary: CompareSummary[];
 };
 
 export type Search = {
@@ -358,7 +415,8 @@ export type DocumentKind = "resume" | "cover_letter";
 export type DocumentStatus = "queued" | "drafting" | "ready" | "approved" | "failed";
 
 /** One sentence, bullet or paragraph, and the evidence ids it relies on. */
-export type DraftLine = { text: string; evidence: string[] };
+/** `group` is the subheading a bullet sits under (a project inside a job). */
+export type DraftLine = { text: string; evidence: string[]; group?: string };
 export type SkillGroup = { group: string; items: string[] };
 export type DraftEntry = { id: string; heading: string; details: string[]; bullets: DraftLine[] };
 export type OtherSection = { heading: string; lines: [string, string][] };
@@ -678,7 +736,12 @@ export const setJobLabel = (id: string, label: JobLabel | null) =>
 export const rescoreJob = (id: string) =>
   apiSend<void>("POST", `/api/jobs/${encodeURIComponent(id)}/rescore`);
 export const updateSettings = (patch: SettingsPatch) => apiSend<Settings>("PUT", "/api/settings", patch);
-export const runEval = (model: string) => apiSend<{ queued: number }>("POST", "/api/evals/run", { model });
+export const runEval = (models: string[]) => apiSend<{ queued: number }>("POST", "/api/evals/run", { models });
+export const setMonthlyCap = (provider: ProviderUsage["provider"], monthlyCapUsd: number) =>
+  apiSend<LlmUsage>("PUT", "/api/llm/caps", { provider, monthly_cap_usd: monthlyCapUsd });
+export const startCompare = (jobIds: string[], models: string[]) =>
+  apiSend<CompareBatch>("POST", "/api/compare/drafts", { job_ids: jobIds, models });
+export const compareDraftUrl = (id: string) => `${API_URL}/api/compare/drafts/${id}/html`;
 export const saveResume = (content: string) => apiSend<ResumeView>("PUT", "/api/profile/resume", { content });
 export const getResumeVersion = (id: string) =>
   apiGet<ResumeVersion>(`/api/profile/resume/versions/${id}`, { cache: "no-store" });

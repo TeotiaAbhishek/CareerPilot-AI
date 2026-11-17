@@ -524,7 +524,8 @@ macro_rules! cards {
     JOIN jobs j ON j.id = t.job_id
     LEFT JOIN legacy_job_analysis l ON l.job_id = t.job_id
     LEFT JOIN LATERAL (
-        SELECT score FROM job_scores WHERE job_id = t.job_id ORDER BY created_at DESC LIMIT 1
+        SELECT score FROM job_scores WHERE job_id = t.job_id
+        ORDER BY (model = (SELECT scoring_model FROM settings)) DESC, created_at DESC LIMIT 1
     ) s ON TRUE
     LEFT JOIN LATERAL (
         SELECT d.status,
@@ -719,7 +720,8 @@ macro_rules! breakdown {
              FROM tracker t JOIN jobs j ON j.id = t.job_id
              LEFT JOIN legacy_job_analysis l ON l.job_id = t.job_id
              LEFT JOIN LATERAL (
-                 SELECT score FROM job_scores WHERE job_id = t.job_id ORDER BY created_at DESC LIMIT 1
+                 SELECT score FROM job_scores WHERE job_id = t.job_id
+        ORDER BY (model = (SELECT scoring_model FROM settings)) DESC, created_at DESC LIMIT 1
              ) s ON TRUE
              WHERE t.applied_at IS NOT NULL AND t.stage <> 'active'
              GROUP BY 1 ORDER BY ", $order

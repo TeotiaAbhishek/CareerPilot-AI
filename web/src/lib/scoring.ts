@@ -31,6 +31,19 @@ export function rounded(value: number | null): string {
   return value === null ? "–" : String(Math.round(value));
 }
 
+/** True for a model that runs on your computer (Ollama), not Claude or OpenAI. */
+export function isLocalModel(model: string): boolean {
+  return !model.startsWith("claude-") && !model.startsWith("gpt-");
+}
+
+/** US dollars: 0.00065 -> "$0.00065", 1.5 -> "$1.50", null -> "–". */
+export function dollars(value: number | null): string {
+  if (value === null) return "–";
+  if (value === 0) return "$0";
+  if (value < 0.01) return `$${Number(value.toPrecision(2))}`;
+  return `$${value.toFixed(2)}`;
+}
+
 /** 12345 -> "12.3 s". */
 export function seconds(ms: number): string {
   return `${(ms / 1000).toFixed(1)} s`;

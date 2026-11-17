@@ -7,7 +7,7 @@ use careerpilot_api::{
     db,
     documents::worker::Drafter,
     import,
-    llm::{LlmClient, OllamaClient},
+    llm::{CloudKeys, LlmClient, OllamaClient},
     mail::Mail,
     profile,
     scoring::Scorer,
@@ -94,12 +94,19 @@ async fn serve(config: Config, db: sqlx::PgPool) -> Result<()> {
         }
     };
 
-    // The one place that picks the model provider. Switching to OpenAI or
-    // Claude later means building a different LlmClient here.
+    // The one model client. The model you pick for a task decides where it
+    // runs: Ollama, or Claude/OpenAI when their API key is in backend/.env.
+    let cloud = CloudKeys::from_env();
     let llm = LlmClient::from(OllamaClient::new(
         &config.ollama_url,
         config.ollama_num_ctx,
-    )?);
+    )?)
+    .with_cloud(db.clone(), &cloud)?;
+    tracing::info!(
+        claude = cloud.anthropic_key.is_some(),
+        openai = cloud.openai_key.is_some(),
+        "cloud model keys"
+    );
     let scorer = Scorer::new(db.clone(), llm.clone());
     scorer.spawn();
     tracing::info!(ollama = %config.ollama_url, "scoring worker started");

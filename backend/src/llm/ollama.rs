@@ -261,6 +261,7 @@ fn message_json(message: &Message) -> Value {
         Message::Assistant {
             content,
             tool_calls,
+            ..
         } => {
             let mut m = json!({ "role": "assistant", "content": content });
             if !tool_calls.is_empty() {

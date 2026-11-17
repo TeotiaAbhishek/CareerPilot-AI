@@ -1,9 +1,10 @@
-//! The scoring prompt. `SYSTEM_PROMPT` is v1's prompt, copied word for word
-//! from `src/intelligence/relevance.py`, so the first eval compares models
-//! fairly. Change `PROMPT_VERSION` whenever you change the prompt: scores are
-//! stored per version, so old and new results never get mixed up.
+//! The scoring prompt. It started as v1's prompt, word for word. v2 adds
+//! the job's level and the years it asks for, so the code can cap the score
+//! of a lead role for someone with two years' experience (see
+//! `seniority_cap`). Change `PROMPT_VERSION` whenever you change the prompt:
+//! scores are stored per version, so old and new results never get mixed up.
 
-pub const PROMPT_VERSION: &str = "v1-port";
+pub const PROMPT_VERSION: &str = "v2-seniority";
 
 pub const SYSTEM_PROMPT: &str = r#"You are evaluating how relevant a job opportunity is for a candidate.
 
@@ -134,6 +135,10 @@ experience, or qualifications.
 
 SENIORITY AND EXPERIENCE
 ------------------------
+The CANDIDATE EXPERIENCE block gives the candidate's years of work
+experience, worked out from the dates on the resume. Use those numbers and
+do not recount them.
+
 Consider explicit minimum experience requirements carefully.
 
 A small experience gap should reduce the score but should not automatically
@@ -151,6 +156,25 @@ For example:
 
 Do not calculate or invent years of experience beyond what the dates and
 experience in the resume reasonably support.
+
+A lead, principal, staff or manager role expects several years of
+experience, including leading work or people. Do not call it a strong
+match for a candidate with only a few years, even when the skills match.
+
+
+ROLE LEVEL AND REQUIRED YEARS
+-----------------------------
+role_level: the level the job is hiring for, from its title and
+description:
+- "entry": graduate, junior, associate, trainee, intern
+- "mid": no level stated, or a plain title such as "Data Analyst"
+- "senior": senior
+- "lead": lead, principal, staff, architect
+- "manager": manager, head of, director
+
+required_years: the minimum years of experience the job explicitly asks
+for, as a whole number ("5+ years" is 5, "3-5 years" is 3). Use 0 when the
+job doesn't ask for a number of years.
 
 
 REQUIREMENT CLASSIFICATION
@@ -272,10 +296,21 @@ pub struct JobForPrompt<'a> {
     pub description: &'a str,
 }
 
-/// The user message: same layout as v1's `analyse_job`.
-pub fn user_prompt(resume: &str, profile_yaml: &str, job: &JobForPrompt<'_>) -> String {
+/// The user message: v1's layout, plus the years worked out in code.
+pub fn user_prompt(
+    resume: &str,
+    experience: &str,
+    profile_yaml: &str,
+    job: &JobForPrompt<'_>,
+) -> String {
+    let experience = if experience.trim().is_empty() {
+        "No dated jobs on the resume."
+    } else {
+        experience.trim()
+    };
     format!(
         "CANDIDATE MASTER RESUME\n=======================\n{resume}\n\n\n\
+         CANDIDATE EXPERIENCE\n====================\n{experience}\n\n\n\
          CANDIDATE PROFILE\n=================\n{profile_yaml}\n\n\n\
          JOB\n===\nTitle: {}\nCompany: {}\nLocation: {}\nWork type: {}\n\n\n\
          JOB DESCRIPTION\n===============\n{}\n",
@@ -293,6 +328,11 @@ pub fn output_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
         "properties": {
+            "role_level": {
+                "type": "string",
+                "enum": ["entry", "mid", "senior", "lead", "manager"]
+            },
+            "required_years": { "type": "integer", "minimum": 0, "maximum": 30 },
             "score": { "type": "integer", "minimum": 0, "maximum": 100 },
             "summary": { "type": "string" },
             "matched_requirements": list,
@@ -301,8 +341,110 @@ pub fn output_schema() -> serde_json::Value {
             "hard_blockers": list
         },
         "required": [
-            "score", "summary", "matched_requirements", "missing_requirements",
+            "role_level", "required_years", "score", "summary", "matched_requirements", "missing_requirements",
             "unknown_requirements", "hard_blockers"
         ]
     })
+}
+
+/// The most a job may score, given the level it hires for, the years it
+/// asks for and your years of experience, with the reason. None when the
+/// model's score can stand.
+///
+/// Models are kind: a lead role whose tools you know scores 90 even with
+/// two years' experience. The model reads the level and the years off the
+/// ad (it's good at that); this does the comparison (code is better at it).
+pub fn seniority_cap(level: &str, required_years: i64, your_years: f64) -> Option<(i64, String)> {
+    let mut caps: Vec<(i64, String)> = Vec::new();
+    let years = format!("you have {your_years} years");
+    match level {
+        "manager" if your_years < 6.0 => {
+            caps.push((45, format!("Manager role: {years} of experience")))
+        }
+        "lead" if your_years < 5.0 => caps.push((50, format!("Lead role: {years} of experience"))),
+        "senior" if your_years < 3.0 => {
+            caps.push((65, format!("Senior role: {years} of experience")))
+        }
+        _ => {}
+    }
+    if required_years > 0 {
+        let gap = required_years as f64 - your_years;
+        let asks = format!("Asks for {required_years}+ years: {years}");
+        if gap >= 3.0 {
+            caps.push((50, asks));
+        } else if gap >= 1.5 {
+            caps.push((65, asks));
+        } else if gap > 0.5 {
+            caps.push((79, asks));
+        }
+    }
+    caps.into_iter().min_by_key(|(cap, _)| *cap)
+}
+
+/// Your resume without your name and the contact lines under it (the ones
+/// with an email, phone number or link): they never go to a model.
+pub fn resume_for_prompt(content: &str, contact: &[String]) -> String {
+    let private: Vec<&str> = contact
+        .iter()
+        .map(|c| c.trim())
+        .filter(|c| has_contact_details(c))
+        .collect();
+    content
+        .lines()
+        .filter(|line| !private.contains(&line.trim()) && !line.trim_start().starts_with("# "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn has_contact_details(line: &str) -> bool {
+    let lower = line.to_lowercase();
+    let digits = line.chars().filter(char::is_ascii_digit).count();
+    lower.contains('@')
+        || lower.contains("http")
+        || lower.contains("www.")
+        || lower.contains("linkedin")
+        || lower.contains("github")
+        || digits >= 7
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lead_roles_are_capped_for_a_few_years_experience() {
+        assert_eq!(
+            seniority_cap("lead", 0, 1.8),
+            Some((50, "Lead role: you have 1.8 years of experience".into()))
+        );
+        assert_eq!(seniority_cap("lead", 0, 6.0), None);
+        assert_eq!(seniority_cap("manager", 0, 3.0).unwrap().0, 45);
+        assert_eq!(seniority_cap("senior", 0, 2.0).unwrap().0, 65);
+        assert_eq!(seniority_cap("mid", 0, 1.0), None);
+    }
+
+    #[test]
+    fn the_years_gap_caps_too_and_the_lowest_cap_wins() {
+        assert_eq!(seniority_cap("mid", 5, 1.8).unwrap().0, 50);
+        assert_eq!(seniority_cap("mid", 3, 1.4).unwrap().0, 65);
+        assert_eq!(seniority_cap("mid", 2, 1.4).unwrap().0, 79);
+        assert_eq!(seniority_cap("mid", 2, 1.6), None);
+        assert_eq!(
+            seniority_cap("senior", 7, 2.0),
+            Some((50, "Asks for 7+ years: you have 2 years".into()))
+        );
+    }
+
+    #[test]
+    fn contact_lines_are_left_out() {
+        let resume = "# Alex Morgan\nData Analyst\nSydney | 0400 000 000 | alex@example.com\n\n## Experience";
+        let contact = vec![
+            "Data Analyst".to_string(),
+            "Sydney | 0400 000 000 | alex@example.com".to_string(),
+        ];
+        assert_eq!(
+            resume_for_prompt(resume, &contact),
+            "Data Analyst\n\n## Experience"
+        );
+    }
 }

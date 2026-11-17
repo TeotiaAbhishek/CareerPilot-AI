@@ -38,7 +38,7 @@ use crate::{
 };
 
 /// Bump when a prompt changes.
-pub const EMAIL_PROMPT_VERSION: &str = "v1-emails";
+pub const EMAIL_PROMPT_VERSION: &str = "v2-plain";
 /// Emails stay short. Longer ones get an "info" flag.
 pub const MAX_EMAIL_WORDS: usize = 150;
 /// Follow-ups are only planned for applications this recent, so importing
@@ -87,7 +87,7 @@ Thank them for their time, mention one genuine strength that fits the role, and 
     }
 }
 
-pub const EMAIL_SYSTEM: &str = "You are writing a short, professional email from a job candidate.
+pub const EMAIL_SYSTEM: &str = concat!("You are writing a short, professional email from a job candidate.
 
 The EVIDENCE list is the ONLY source of truth about the candidate. Each item has an id in square brackets.
 
@@ -97,12 +97,15 @@ YOU MUST NOT:
 - claim knowledge of the company beyond what the job description says
 - invent names of people, interviewers or recruiters
 
+",
+    crate::documents::prompt::plain_writing!(),
+    "
 STYLE:
 - Australian English. Warm, direct, not pushy. 60-120 words in 2-3 short paragraphs.
 - A clear subject line naming the role, at most 10 words.
 - No greeting or sign-off: those are added for you. No em dashes or en dashes.
 - Every paragraph must list the ids of the evidence it uses (a closing sentence can cite the job you mention, e.g. W1).
-- Return only JSON that matches the schema.";
+- Return only JSON that matches the schema.");
 
 pub fn email_schema() -> Value {
     json!({
@@ -783,10 +786,12 @@ mod tests {
             Line {
                 text: "I built reports at Acme.".into(),
                 evidence: vec!["W1.1".into()],
+                group: None,
             },
             Line {
                 text: "Happy to help. Thanks for your time.".into(),
                 evidence: vec!["W1".into()],
+                group: None,
             },
         ];
         assert!(
@@ -796,11 +801,13 @@ mod tests {
         let claim = vec![Line {
             text: "I led a Kubernetes migration.".into(),
             evidence: vec!["W1".into()],
+            group: None,
         }];
         assert_eq!(check_email(&check, &claim).len(), 1);
         let long = vec![Line {
             text: "word ".repeat(160),
             evidence: vec!["W1.1".into()],
+            group: None,
         }];
         let flags = check_email(&check, &long);
         assert_eq!(flags.len(), 1);

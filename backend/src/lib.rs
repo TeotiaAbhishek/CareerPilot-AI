@@ -101,6 +101,13 @@ pub fn build_app(state: AppState, web_origin: &str) -> Router {
         .route("/evals", get(routes::evals::report))
         .route("/evals/run", post(routes::evals::run))
         .route(
+            "/compare/drafts",
+            get(documents::compare::latest).post(documents::compare::start),
+        )
+        .route("/compare/drafts/{id}/html", get(documents::compare::html))
+        .route("/llm/usage", get(llm::usage::report))
+        .route("/llm/caps", put(llm::usage::set_cap))
+        .route(
             "/profile/resume",
             get(profile::get_resume).put(profile::save_resume),
         )
