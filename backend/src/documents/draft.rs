@@ -120,7 +120,8 @@ fn clean_line(line: Line) -> Line {
     Line {
         text: clean_text(&line.text),
         evidence,
-        group: None,
+        // Kept, so saving an edited draft doesn't lose its subheadings.
+        group: line.group,
     }
 }
 
@@ -813,5 +814,26 @@ mod tests {
         let (headline, rest) = split_headline(&contact[1..]);
         assert_eq!(headline, None);
         assert_eq!(rest.len(), 2);
+    }
+
+    #[test]
+    fn saving_a_draft_keeps_its_subheadings() {
+        let draft = ResumeDraft {
+            experience: vec![DraftEntry {
+                id: "W1".into(),
+                bullets: vec![Line {
+                    text: "Built a lakehouse.".into(),
+                    evidence: vec!["W1.1".into()],
+                    group: Some("Lakehouse".into()),
+                }],
+                ..DraftEntry::default()
+            }],
+            ..ResumeDraft::default()
+        };
+        let saved = tidy_resume(draft);
+        assert_eq!(
+            saved.experience[0].bullets[0].group.as_deref(),
+            Some("Lakehouse")
+        );
     }
 }
