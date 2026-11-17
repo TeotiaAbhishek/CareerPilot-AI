@@ -16,7 +16,7 @@ use uuid::Uuid;
 use super::{
     Kind,
     check::{CheckContext, note_flags},
-    draft::{LetterAnswer, ResumeAnswer, add_job_skills, assemble_letter, assemble_resume},
+    draft::{LetterAnswer, ResumeAnswer, arrange_skills, assemble_letter, assemble_resume},
     prompt::{
         JobForPrompt, LETTER_SYSTEM, LETTER_TASK, PROMPT_VERSION, RESUME_SYSTEM, letter_schema,
         resume_schema, resume_task, user_prompt,
@@ -387,7 +387,9 @@ pub(crate) async fn write_document(
         Kind::Resume => {
             let answer: ResumeAnswer = serde_json::from_value(value).map_err(bad_schema)?;
             let (mut draft, notes) = assemble_resume(&master, answer);
-            add_job_skills(&mut draft, &master, &format!("{} {description}", job.title));
+            let pages = settings::load(db).await.map_or(2, |s| s.resume_pages);
+            let job_text = format!("{} {description}", job.title);
+            arrange_skills(&mut draft, &master, &job_text, pages >= 2);
             let mut flags = check.check_resume(&draft);
             flags.extend(note_flags(&notes));
             (serde_json::to_value(draft).expect("serialisable"), flags)

@@ -106,7 +106,12 @@ fn base_name(skill: &str) -> String {
 
 fn clean_line(line: Line) -> Line {
     let mut evidence: Vec<String> = Vec::new();
-    for id in line.evidence {
+    // Models sometimes put several ids in one string: "W1.1, W1.2".
+    for id in line
+        .evidence
+        .iter()
+        .flat_map(|ids| ids.split([',', ';', ' ']))
+    {
         let id = id.trim().trim_matches(['[', ']']).to_string();
         if !id.is_empty() && !evidence.contains(&id) {
             evidence.push(id);
@@ -140,13 +145,19 @@ fn group_bullets(entry: &Entry, mut bullets: Vec<Line>) -> Vec<Line> {
         return bullets;
     }
     for line in &mut bullets {
-        line.group = line.evidence.iter().find_map(|id| {
-            entry
-                .bullets
-                .iter()
-                .find(|b| &b.id == id)
-                .and_then(|b| b.group.clone())
-        });
+        line.group = line
+            .evidence
+            .iter()
+            .find_map(|id| {
+                entry
+                    .bullets
+                    .iter()
+                    .find(|b| &b.id == id)
+                    .and_then(|b| b.group.clone())
+            })
+            // Cited only the job ("W1"): the subheading whose bullets share
+            // the most words with it.
+            .or_else(|| closest_group(entry, &line.text));
     }
     // Lines without a subheading go first, straight under the job.
     bullets.sort_by_key(|l| {
@@ -158,6 +169,29 @@ fn group_bullets(entry: &Entry, mut bullets: Vec<Line>) -> Vec<Line> {
     bullets
 }
 
+fn closest_group(entry: &Entry, text: &str) -> Option<String> {
+    let words = |t: &str| -> std::collections::HashSet<String> {
+        t.to_lowercase()
+            .split(|c: char| !c.is_alphanumeric())
+            .filter(|w| w.len() > 3)
+            .map(String::from)
+            .collect()
+    };
+    let line = words(text);
+    entry
+        .bullets
+        .iter()
+        .filter_map(|b| {
+            Some((
+                b.group.as_ref()?,
+                words(&b.text).intersection(&line).count(),
+            ))
+        })
+        .filter(|(_, shared)| *shared >= 3)
+        .max_by_key(|(_, shared)| *shared)
+        .map(|(g, _)| g.clone())
+}
+
 fn draft_entry(entry: &Entry, bullets: Vec<Line>) -> DraftEntry {
     DraftEntry {
         id: entry.id.clone(),
@@ -167,10 +201,11 @@ fn draft_entry(entry: &Entry, bullets: Vec<Line>) -> DraftEntry {
     }
 }
 
-/// Skills of yours the job ad names that the model left out go back in, in
-/// their own group from your resume. A model that trims the list hard
-/// (Claude did) can't drop "Python" from a job that asks for Python.
-pub fn add_job_skills(draft: &mut ResumeDraft, master: &MasterResume, job_text: &str) {
+/// The skills section, always in your own groups and spelling. The model's
+/// picks come first, then skills of yours the job ad names; with `all` (a
+/// two-page resume) every other skill of yours follows, so the list backs up
+/// everything the bullets mention. Groups are ordered by their first pick.
+pub fn arrange_skills(draft: &mut ResumeDraft, master: &MasterResume, job_text: &str, all: bool) {
     let job = format!(" {} ", job_text.to_lowercase());
     let named = |skill: &str| {
         let name = base_name(skill);
@@ -182,26 +217,41 @@ pub fn add_job_skills(draft: &mut ResumeDraft, master: &MasterResume, job_text: 
                     && after.is_none_or(|c| !c.is_alphanumeric())
             })
     };
-    let shown = |draft: &ResumeDraft, skill: &str| {
-        draft
-            .skills
-            .iter()
-            .flat_map(|g| &g.items)
-            .any(|s| base_name(s) == base_name(skill))
-    };
-    for group in &master.skills {
-        for skill in &group.items {
-            if !named(skill) || shown(draft, skill) {
-                continue;
-            }
-            match draft.skills.iter_mut().find(|g| g.group == group.group) {
-                Some(g) => g.items.push(skill.clone()),
-                None => draft.skills.push(SkillGroup {
-                    group: group.group.clone(),
-                    items: vec![skill.clone()],
-                }),
-            }
+    // Picks, best first: the model's, then the job's.
+    let mut picks: Vec<String> = draft.skills.iter().flat_map(|g| g.items.clone()).collect();
+    for skill in master.skills.iter().flat_map(|g| &g.items) {
+        if named(skill) && !picks.contains(skill) {
+            picks.push(skill.clone());
         }
+    }
+    let rank = |skill: &String| picks.iter().position(|p| p == skill);
+    let mut groups: Vec<(usize, SkillGroup)> = master
+        .skills
+        .iter()
+        .enumerate()
+        .filter_map(|(i, group)| {
+            let mut items: Vec<&String> = group
+                .items
+                .iter()
+                .filter(|s| all || rank(s).is_some())
+                .collect();
+            if items.is_empty() {
+                return None;
+            }
+            items.sort_by_key(|s| rank(s).unwrap_or(usize::MAX));
+            let first = rank(items[0]).unwrap_or(picks.len() + i);
+            Some((
+                first,
+                SkillGroup {
+                    group: group.group.clone(),
+                    items: items.into_iter().cloned().collect(),
+                },
+            ))
+        })
+        .collect();
+    groups.sort_by_key(|(first, _)| *first);
+    if !groups.is_empty() {
+        draft.skills = groups.into_iter().map(|(_, g)| g).collect();
     }
 }
 
@@ -548,35 +598,88 @@ mod tests {
     }
 
     #[test]
-    fn skills_the_job_names_are_put_back() {
+    fn skills_keep_your_groups_with_the_picks_first() {
         let master = MasterResume::parse(
-            "## Skills\n\n* **Programming:** Python (pandas, NumPy), SQL, R\n* **BI:** Power BI, Tableau\n",
+            "## Skills\n\n* **Programming:** Python (pandas, NumPy), SQL, R\n* **BI:** Power BI, Tableau\n* **Cloud:** Azure\n",
         );
-        let mut draft = ResumeDraft {
+        // The model renamed a group and picked only SQL.
+        let picked = || ResumeDraft {
             skills: vec![SkillGroup {
-                group: "Programming".into(),
+                group: "Core".into(),
                 items: vec!["SQL".into()],
             }],
             ..ResumeDraft::default()
         };
-        add_job_skills(
-            &mut draft,
-            &master,
-            "You know Python, SQL and Power BI. Rust is a plus. Report to the CFO.",
-        );
+        let job = "You know Python, SQL and Power BI. Report to the CFO.";
+        let group = |name: &str, items: &[&str]| SkillGroup {
+            group: name.into(),
+            items: items.iter().map(|s| s.to_string()).collect(),
+        };
+
+        // One page: the picks and the job's skills, in your groups.
+        let mut draft = picked();
+        arrange_skills(&mut draft, &master, job, false);
         assert_eq!(
             draft.skills,
             vec![
-                SkillGroup {
-                    group: "Programming".into(),
-                    items: vec!["SQL".into(), "Python (pandas, NumPy)".into()]
-                },
-                SkillGroup {
-                    group: "BI".into(),
-                    items: vec!["Power BI".into()]
-                },
+                group("Programming", &["SQL", "Python (pandas, NumPy)"]),
+                group("BI", &["Power BI"]),
             ],
-            "R isn't matched inside other words, Tableau isn't named"
+            "R isn't matched inside other words"
+        );
+
+        // Two pages: everything, picks first.
+        let mut draft = picked();
+        arrange_skills(&mut draft, &master, job, true);
+        assert_eq!(
+            draft.skills,
+            vec![
+                group("Programming", &["SQL", "Python (pandas, NumPy)", "R"]),
+                group("BI", &["Power BI", "Tableau"]),
+                group("Cloud", &["Azure"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bullet_citing_only_the_job_finds_its_subheading() {
+        let master = MasterResume::parse(
+            "## Experience\n\n### Independent\n\n#### Lakehouse\n\n* Built a Databricks medallion lakehouse with dbt tests.\n\n#### Job app\n\n* Built a job search app that scrapes SEEK daily.\n",
+        );
+        let answer = ResumeAnswer {
+            headline: None,
+            summary: line("x", &["S"]),
+            skills: vec![],
+            experience: vec![EntryAnswer {
+                id: "W1".into(),
+                bullets: vec![
+                    line(
+                        "Built a job search app that scrapes SEEK listings daily.",
+                        &["W1"],
+                    ),
+                    line(
+                        "Built a medallion lakehouse on Databricks with dbt tests.",
+                        &["W1.1, W1"],
+                    ),
+                ],
+            }],
+            projects: vec![],
+        };
+        let (draft, _) = assemble_resume(&master, answer);
+        let got: Vec<_> = draft.experience[0]
+            .bullets
+            .iter()
+            .map(|l| (l.group.as_deref(), l.evidence.clone()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (
+                    Some("Lakehouse"),
+                    vec!["W1.1".to_string(), "W1".to_string()]
+                ),
+                (Some("Job app"), vec!["W1".to_string()]),
+            ]
         );
     }
 }
