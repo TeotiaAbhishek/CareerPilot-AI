@@ -139,10 +139,10 @@ fn original_bullets(entry: &Entry) -> Vec<Line> {
 }
 
 /// Put each bullet under the subheading of the first bullet it cites, and
-/// keep the subheadings in your order. Bullets keep their order within one.
+/// keep the subheadings in the order the model first used them. Bullets keep
+/// their order within one.
 fn group_bullets(entry: &Entry, mut bullets: Vec<Line>) -> Vec<Line> {
-    let order = groups(entry);
-    if order.is_empty() {
+    if groups(entry).is_empty() {
         return bullets;
     }
     for line in &mut bullets {
@@ -159,6 +159,14 @@ fn group_bullets(entry: &Entry, mut bullets: Vec<Line>) -> Vec<Line> {
             // Cited only the job ("W1"): the subheading whose bullets share
             // the most words with it.
             .or_else(|| closest_group(entry, &line.text));
+    }
+    // Subheadings in the order the model first used them, so the project
+    // that matters most for this job comes first.
+    let mut order: Vec<String> = Vec::new();
+    for g in bullets.iter().filter_map(|l| l.group.clone()) {
+        if !order.contains(&g) {
+            order.push(g);
+        }
     }
     // Lines without a subheading go first, straight under the job.
     bullets.sort_by_key(|l| {
@@ -593,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn bullets_go_back_under_their_subheadings() {
+    fn bullets_go_back_under_their_subheadings_in_the_models_order() {
         let master = MasterResume::parse(
             "## Experience\n\n### Independent\n\n#### Lakehouse\n\n* Built it.\n\n#### Job app\n\n* Shipped it.\n* Tested it.\n",
         );
@@ -601,7 +609,8 @@ mod tests {
             headline: None,
             summary: line("x", &["S"]),
             skills: vec![],
-            // The model mixes the order up and invents a group: code fixes both.
+            // The model puts the job app first, splits its bullets and invents a
+            // group: code keeps the job app first and groups its bullets.
             experience: vec![EntryAnswer {
                 id: "W1".into(),
                 bullets: vec![
@@ -624,9 +633,9 @@ mod tests {
         assert_eq!(
             got,
             vec![
-                (Some("Lakehouse"), "Built a lakehouse."),
                 (Some("Job app"), "Tested the job app."),
                 (Some("Job app"), "Shipped the job app."),
+                (Some("Lakehouse"), "Built a lakehouse."),
             ]
         );
     }
@@ -730,11 +739,11 @@ mod tests {
         assert_eq!(
             got,
             vec![
+                (Some("Job app"), vec!["W1".to_string()]),
                 (
                     Some("Lakehouse"),
                     vec!["W1.1".to_string(), "W1".to_string()]
                 ),
-                (Some("Job app"), vec!["W1".to_string()]),
             ]
         );
     }
@@ -785,13 +794,14 @@ mod tests {
                 g(Some("Certifications"), "SQL (Advanced)."),
             ]
         );
-        // Older jobs: everything, the model's wording first in each subheading.
+        // Older jobs: everything, in the model's subheading order (reporting
+        // first here), the model's wording first in each subheading.
         assert_eq!(
             texts(1),
             vec![
-                g(Some("Fraud modelling"), "Built a fraud model."),
                 g(Some("Fraud reporting"), "Built dashboards for banks."),
                 g(Some("Fraud reporting"), "Automated reports."),
+                g(Some("Fraud modelling"), "Built a fraud model."),
             ]
         );
         assert_eq!(

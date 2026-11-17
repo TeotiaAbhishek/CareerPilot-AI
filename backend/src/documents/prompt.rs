@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::resume::{MasterResume, entry_line, skill_line};
 
 /// Bump when a prompt changes, so drafts record which prompt wrote them.
-pub const PROMPT_VERSION: &str = "v2-summary";
+pub const PROMPT_VERSION: &str = "v2-order";
 
 /// Rules against text that reads as AI-written, from Wikipedia's "Signs of
 /// AI writing". Shared by resumes, cover letters and emails; `style.rs`
@@ -41,9 +41,10 @@ HOW A RECRUITER READS IT:
 
 YOU MAY:
 - choose the headline: the ONE title from HEADLINE OPTIONS that best fits the job, copied exactly
-- write the professional summary: 3 sentences, 45-70 words. First, the headline title you chose and what the candidate does, in the job's own terms. Second, the strongest evidence for THIS job, with its number. Third, the most relevant recent project and the degree. Never open with \"Data professional\", and don't list every tool
+- write the professional summary: 3 sentences, 45-70 words. First, the headline title you chose and what the candidate does, in the job's own terms. Second, the strongest evidence for THIS job, with its number. Third, the paid work that best matches the job (for example reporting for stakeholders) or the most relevant project, and the degree. Never open with \"Data professional\", and don't list every tool
 - order the skills so the job's ones come first (code adds back any you leave out)
 - rewrite and reorder bullets under each job, to emphasise what the job asks for; drop only weaker projects or bullets of the most recent role
+- order the projects (subheadings) of the most recent role by how well they match the job: code keeps your order
 - use the job's wording where the evidence supports it
 
 YOU MUST NOT:
