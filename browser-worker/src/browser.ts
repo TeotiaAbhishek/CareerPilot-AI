@@ -1,6 +1,6 @@
 import { chromium, type BrowserContext, type Locator, type Page } from "playwright";
 
-import { classifyButton } from "./buttons.ts";
+import { classifyButton, isStartButton } from "./buttons.ts";
 import { readPage } from "./page-script.ts";
 import type { FillRequest, FillResult, SavedResume, Snapshot } from "./types.ts";
 
@@ -109,9 +109,13 @@ export class Browser {
   async snapshot(tab: string): Promise<Snapshot> {
     const page = this.page(tab);
     const snap = await readWhenStill(page);
+    const noForm = snap.fields.length === 0 && !snap.password;
     return {
       ...snap,
-      buttons: snap.buttons.map((b) => ({ ...b, kind: classifyButton(b.text) })),
+      buttons: snap.buttons.map((b) => ({
+        ...b,
+        kind: noForm && isStartButton(b.text) ? "start" : classifyButton(b.text),
+      })),
     };
   }
 
@@ -162,13 +166,32 @@ export class Browser {
     const page = this.page(tab);
     const button = page.locator(`[data-cp-btn="${id}"]`).first();
     const text = (await button.innerText().catch(() => "")) || (await button.inputValue().catch(() => ""));
-    if (classifyButton(text) === "submit" && !(auth && (await page.evaluate(isAuthPage, text)))) {
+    // "Apply now" on a job ad: allowed only while the page has no form, so it
+    // can't be the button that sends one.
+    const start = isStartButton(text) && (await hasNoForm(page));
+    if (
+      !start &&
+      classifyButton(text) === "submit" &&
+      !(auth && (await page.evaluate(isAuthPage, text)))
+    ) {
       throw new SubmitBlocked(`"${text.trim()}" looks like it sends the application, so it's yours to click.`);
     }
+    // Some sites open the form in a new tab: carry on in that one.
+    const popup = start
+      ? page.context().waitForEvent("page", { timeout: 5_000 }).catch(() => null)
+      : Promise.resolve(null);
     await press(button, await this.hidden(page));
-    await page.waitForLoadState("domcontentloaded").catch(() => {});
-    await settle(page);
-    return page.url();
+    const opened = await popup;
+    const now = opened ?? page;
+    if (opened) {
+      this.tabs.set(tab, opened);
+      opened.on("close", () => {
+        if (this.tabs.get(tab) === opened) this.tabs.delete(tab);
+      });
+    }
+    await now.waitForLoadState("domcontentloaded").catch(() => {});
+    await settle(now);
+    return now.url();
   }
 
   /** Go to a link in this tab, e.g. the "verify your email" link from an email. */
@@ -185,7 +208,9 @@ export class Browser {
    * "Added 3 days ago" text beside each.
    */
   async savedResumes(tab: string, prefixes: string[]): Promise<SavedResume[]> {
-    const found = await this.page(tab).evaluate(findResumes, prefixes);
+    const page = this.page(tab);
+    await openResumeList(page);
+    const found = await page.evaluate(findResumes, prefixes);
     return found.map(({ name, added, index }) => ({ name, added, index }));
   }
 
@@ -196,14 +221,27 @@ export class Browser {
    */
   async deleteResume(tab: string, prefixes: string[], index: number, name: string): Promise<boolean> {
     const page = this.page(tab);
+    await openResumeList(page);
     const before = await page.evaluate(findResumes, prefixes);
     const target = before[index];
     if (!target || target.name !== name || !target.button) return false;
-    await page.locator(`[data-cp-del="${target.button}"]`).first().click({ timeout: 10_000 });
-    // Only ever inside the confirmation box, so it can't hit another resumé's button.
+    const button = page.locator(`[data-cp-del="${target.button}"]`).first();
+    await button.click({ timeout: 10_000 });
+    if (target.menu) {
+      // SEEK: "Options for <file>" opens a menu; Delete is in it. Only the
+      // menu that just opened is visible, so this is this resumé's Delete.
+      await page
+        .getByRole("menuitem", { name: /^(delete|remove)\b/i })
+        .filter({ visible: true })
+        .first()
+        .click({ timeout: 5_000 });
+    }
+    // Only ever inside the confirmation box ("Delete resumé", "Delete
+    // default resumé"), so it can't hit another resumé's button.
     const confirm = page
       .locator('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
       .getByRole("button", { name: /^(delete|remove|yes)\b/i })
+      .filter({ visible: true })
       .last();
     await confirm.click({ timeout: 5_000 }).catch(() => {});
     await settle(page);
@@ -326,7 +364,9 @@ function isAuthPage(buttonText: string): boolean {
  * each with the Delete / Remove button of its own row (tagged data-cp-del)
  * and the rest of the row's text ("Added 3 days ago").
  */
-function findResumes(prefixes: string[]): { name: string; added: string; index: number; button: string | null }[] {
+function findResumes(
+  prefixes: string[],
+): { name: string; added: string; index: number; button: string | null; menu: boolean }[] {
   const w = window as unknown as { __cpDel?: number };
   const shown = (el: HTMLElement) => el.getBoundingClientRect().width > 0;
   const text = (el: HTMLElement) => (el.innerText ?? "").replace(/\s+/g, " ").trim();
@@ -342,6 +382,22 @@ function findResumes(prefixes: string[]): { name: string; added: string; index: 
       !Array.from(el.children).some((c) => starts(text(c as HTMLElement))),
   );
   return holders.map((holder, index) => {
+    const name = text(holder);
+    // SEEK: a menu button named after the file ("Options for <file>"). Walk
+    // up until the box holds exactly one such button: that box is this
+    // resumé's row, and the button must name this file.
+    const optionsLabel = (b: HTMLElement) => (b.getAttribute("aria-label") || b.innerText || "").trim();
+    for (let box: HTMLElement | null = holder; box && box !== document.body; box = box.parentElement) {
+      const options = Array.from(box.querySelectorAll<HTMLElement>('button, [role="button"]')).filter(
+        (b) => shown(b) && optionsLabel(b).startsWith("Options for "),
+      );
+      if (options.length === 0) continue;
+      if (options.length > 1 || optionsLabel(options[0]) !== `Options for ${name}`) break;
+      const id = options[0].dataset.cpDel || `d${(w.__cpDel = (w.__cpDel ?? 0) + 1)}`;
+      options[0].dataset.cpDel = id;
+      const added = text(box).replace(name, "").replace(/\b(download|delete|remove)\b/gi, "").replace(/⋯/g, "").trim();
+      return { name, added, index, button: id, menu: true };
+    }
     // Walk up until the box holds exactly one Delete / Remove button: that
     // box is this resumé's row. If it ever holds more than one, it's another
     // resumé's too, so there's no safe button to press.
@@ -361,9 +417,8 @@ function findResumes(prefixes: string[]): { name: string; added: string; index: 
       id = button.dataset.cpDel || `d${(w.__cpDel = (w.__cpDel ?? 0) + 1)}`;
       button.dataset.cpDel = id;
     }
-    const name = text(holder);
     const added = text(row).replace(name, "").replace(/\b(delete|remove)\b/gi, "").trim();
-    return { name, added, index, button: id };
+    return { name, added, index, button: id, menu: false };
   });
 }
 
@@ -448,10 +503,32 @@ async function readWhenStill(page: Page) {
       return await page.evaluate(readPage);
     } catch (error) {
       const moving = /context was destroyed|navigat|Cannot find context/i.test(String(error));
-      if (!moving || attempt >= 5) throw error;
+      if (!moving || attempt >= 8) throw error;
+      // A redirect chain (SEEK to the employer's site) can take a few hops:
+      // wait for the next page to finish loading before reading again.
+      await page.waitForLoadState("load", { timeout: 10_000 }).catch(() => {});
       await settle(page);
     }
   }
+}
+
+/**
+ * SEEK lists resumés behind "Add or manage resumés (N)": open it when it's
+ * there and the list isn't showing yet. Does nothing on other pages.
+ */
+async function openResumeList(page: Page): Promise<void> {
+  const manage = page.getByRole("button", { name: /^(add or )?manage resum/i }).filter({ visible: true });
+  const open = page.getByRole("button", { name: /^Options for /i }).filter({ visible: true });
+  if ((await manage.count()) > 0 && (await open.count()) === 0) {
+    await manage.first().click({ timeout: 10_000 });
+    await settle(page);
+  }
+}
+
+/** True when the page shows no form to fill: a job ad, not an application. */
+async function hasNoForm(page: Page): Promise<boolean> {
+  const snap = await readWhenStill(page);
+  return snap.fields.length === 0 && !snap.password;
 }
 
 async function settle(page: Page): Promise<void> {

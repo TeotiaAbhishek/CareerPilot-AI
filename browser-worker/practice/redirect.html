@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Redirecting…</title>
+</head>
+<body>
+<p>Practice redirect · taking you to the employer's site…</p>
+<script>
+  // Like SEEK sending you to an employer's careers site: a few quick hops.
+  const params = new URLSearchParams(location.search);
+  const hops = Number(params.get("hops") ?? "3");
+  setTimeout(() => {
+    location.replace(hops > 1 ? `/practice/redirect?hops=${hops - 1}` : "/practice/careers-ad");
+  }, 150);
+</script>
+</body>
+</html>

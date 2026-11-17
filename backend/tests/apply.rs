@@ -19,6 +19,8 @@ use sqlx::PgPool;
 /// A two-page application form, like a careers site.
 #[derive(Default)]
 struct Form {
+    /// Start on a job ad whose "Apply now" link opens the form (page 0).
+    ad: bool,
     page: u8,
     captcha: bool,
     values: HashMap<String, String>,
@@ -46,6 +48,19 @@ fn field(
 }
 
 fn snapshot(form: &Form) -> Value {
+    if form.page == 0 {
+        // The job ad: no form yet, only links.
+        return json!({
+            "url": "https://careers.example.com/jobs/1", "title": "Data Analyst",
+            "headings": ["Data Analyst"], "fields": [],
+            "buttons": [
+                { "id": "b8", "text": "Sign in", "kind": "other" },
+                { "id": "b0", "text": "Apply now", "kind": "start" }
+            ],
+            "errors": [], "captcha": false, "password": false,
+            "text": "Data Analyst. Build Power BI dashboards. Apply now"
+        });
+    }
     let (fields, buttons, heading) = if form.page == 1 {
         let mut fields = vec![
             field(form, "f1", "text", "First name *", true, &[]),
@@ -145,7 +160,7 @@ async fn fake_worker(form: Shared) -> String {
     async fn open(State(form): State<Shared>) -> (StatusCode, Json<Value>) {
         let mut f = form.lock().unwrap();
         f.tabs_opened += 1;
-        f.page = 1;
+        f.page = if f.ad { 0 } else { 1 };
         (StatusCode::CREATED, Json(json!({ "tab": "t1" })))
     }
     async fn tab(Path(tab): Path<String>) -> (StatusCode, Json<Value>) {
@@ -193,6 +208,9 @@ async fn fake_worker(form: Shared) -> String {
                 StatusCode::CONFLICT,
                 Json(json!({ "error": "no", "code": "submit_blocked" })),
             );
+        }
+        if id == "b0" && f.page == 0 {
+            f.page = 1;
         }
         if id == "b1"
             && ["f1", "f2", "f3", "f4"]
@@ -349,6 +367,42 @@ async fn status(db: &PgPool, id: &str) -> String {
         .fetch_one(db)
         .await
         .unwrap()
+}
+
+#[sqlx::test]
+async fn a_job_ad_opens_the_form_with_apply_now(db: PgPool) {
+    let form: Shared = Arc::new(Mutex::new(Form {
+        ad: true,
+        ..Form::default()
+    }));
+    let prompts: Arc<Mutex<Vec<String>>> = Arc::default();
+    let worker = fake_worker(form.clone()).await;
+    let ollama = fake_ollama(prompts).await;
+    let (url, applier, _) = common::spawn_apply_app(db.clone(), &ollama, &worker).await;
+    setup(&db, &worker).await;
+    approve_resume(&db, "j1").await;
+    let app: Value = reqwest::Client::new()
+        .post(format!("{url}/api/jobs/j1/apply"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let id = app["id"].as_str().unwrap().to_string();
+
+    applier.run_next().await.unwrap();
+    // Through the ad and onto the form, which it fills as usual.
+    assert_eq!(status(&db, &id).await, "waiting_for_you");
+    let f = form.lock().unwrap();
+    assert_eq!(f.clicks.first().map(String::as_str), Some("b0"));
+    assert_eq!(f.clicks.iter().filter(|c| *c == "b0").count(), 1);
+    assert!(
+        !f.clicks.contains(&"b8".to_string()),
+        "never Sign in on an ad"
+    );
+    assert_eq!(f.values["f1"], "Test");
+    assert_eq!(f.submit_attempts, 0);
 }
 
 #[sqlx::test]

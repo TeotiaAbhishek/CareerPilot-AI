@@ -118,7 +118,7 @@ pub async fn scan(
     let url = if params.practice {
         // The practice page names its files after you.
         reqwest::Url::parse_with_params(
-            &format!("{}/practice/seek-profile", browser.base_url()),
+            &format!("{}/practice/seek-resumes", browser.base_url()),
             &[("name", facts.full_name.trim())],
         )
         .map_err(|e| AppError::Unavailable(e.to_string()))?

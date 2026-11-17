@@ -25,7 +25,18 @@ import type { AddressInfo } from "node:net";
 import { Browser, SubmitBlocked, TabNotFound, message, type BrowserOptions } from "./browser.ts";
 
 const MAX_BODY = 10 * 1024 * 1024;
-const PRACTICE = new Set(["quick-apply", "employer-form", "captcha", "careers-login", "careers-code", "seek-profile"]);
+const PRACTICE = new Set([
+  "quick-apply",
+  "employer-form",
+  "captcha",
+  "careers-login",
+  "careers-code",
+  "seek-profile",
+  "careers-ad",
+  "redirect",
+  "apply-form",
+  "seek-resumes",
+]);
 
 /** Emails "sent" by the practice careers site, so practice runs need no real inbox. */
 interface PracticeEmail {
