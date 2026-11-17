@@ -6,7 +6,7 @@ use careerpilot_api::{
     apply::{browser::BrowserClient, runner::Applier},
     build_app,
     documents::worker::Drafter,
-    llm::{LlmClient, OllamaClient},
+    llm::{CloudKeys, LlmClient, OllamaClient},
     mail::Mail,
     scoring::Scorer,
     scraper::seek::{Politeness, SeekClient},
@@ -57,12 +57,34 @@ pub async fn spawn_scoring_app(db: PgPool, ollama_url: &str) -> (String, Scorer)
     (url, scorer)
 }
 
+/// Like `spawn_scoring_app`, with Claude and OpenAI pointed at fakes.
+pub async fn spawn_cloud_app(
+    db: PgPool,
+    ollama_url: &str,
+    keys: CloudKeys,
+) -> (String, Scorer, Drafter) {
+    let (url, scorer, drafter, _) =
+        spawn_with(db, NOWHERE, ollama_url, NOWHERE, true, Some(keys)).await;
+    (url, scorer, drafter)
+}
+
 async fn spawn_full(
     db: PgPool,
     seek_base_url: &str,
     ollama_url: &str,
     worker_url: &str,
     unlocked: bool,
+) -> (String, Scorer, Drafter, Applier) {
+    spawn_with(db, seek_base_url, ollama_url, worker_url, unlocked, None).await
+}
+
+async fn spawn_with(
+    db: PgPool,
+    seek_base_url: &str,
+    ollama_url: &str,
+    worker_url: &str,
+    unlocked: bool,
+    cloud: Option<CloudKeys>,
 ) -> (String, Scorer, Drafter, Applier) {
     // Scoring needs a resume and a location.
     sqlx::query("UPDATE profile_facts SET city = 'Sydney', state = 'NSW'")
@@ -76,7 +98,10 @@ async fn spawn_full(
     .await
     .unwrap();
 
-    let llm = LlmClient::from(OllamaClient::new(ollama_url, 8192).unwrap());
+    let mut llm = LlmClient::from(OllamaClient::new(ollama_url, 8192).unwrap());
+    if let Some(keys) = cloud {
+        llm = llm.with_cloud(db.clone(), &keys).unwrap();
+    }
     let scorer = Scorer::new(db.clone(), llm.clone());
     let drafter = Drafter::new(db.clone(), llm.clone());
     let vault = unlocked.then(|| VaultKey::from_base64(TEST_VAULT_KEY).unwrap());

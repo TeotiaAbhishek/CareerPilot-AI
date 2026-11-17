@@ -69,7 +69,7 @@ pub enum Step {
     Paused(String),
 }
 
-enum Failure {
+pub(crate) enum Failure {
     Paused(String),
     Document(String),
 }
@@ -225,113 +225,19 @@ impl Drafter {
 
     async fn draft(&self, task: &Task) -> Result<(), Failure> {
         let db = &self.inner.db;
-        let paused = |e: sqlx::Error| Failure::Paused(e.to_string());
-
-        let job: JobRow = sqlx::query_as(
-            "SELECT title, company, location, work_type, description_text FROM jobs WHERE id = $1",
-        )
-        .bind(&task.job_id)
-        .fetch_one(db)
-        .await
-        .map_err(|e| Failure::Document(format!("could not load the job: {e}")))?;
-        let Some(description) = job.description_text.as_deref() else {
-            return Err(Failure::Document(
-                "The job has no description to tailor to.".into(),
-            ));
-        };
-
-        let resume = profile::current_resume(db)
+        let settings = settings::load(db)
             .await
-            .map_err(paused)?
-            .ok_or_else(|| Failure::Paused("Add your resume on the Profile page first.".into()))?;
-        let master = MasterResume::parse(&resume.content);
-        if master.experience.is_empty() && master.projects.is_empty() {
-            return Err(Failure::Paused(
-                "Your resume needs an \"## Experience\" or \"## Projects\" section with \"### \" entries."
-                    .into(),
-            ));
-        }
-
-        // The latest score's analysis helps the model focus.
-        let analysis: Option<Analysis> = sqlx::query_as(
-            "SELECT matched, missing FROM job_scores WHERE job_id = $1
-             ORDER BY created_at DESC LIMIT 1",
+            .map_err(|e| Failure::Paused(e.to_string()))?;
+        let written = write_document(
+            db,
+            &self.inner.llm,
+            &task.job_id,
+            task.kind,
+            task.note.as_deref(),
+            &settings.drafting_model,
+            settings.drafting_think,
         )
-        .bind(&task.job_id)
-        .fetch_optional(db)
-        .await
-        .map_err(paused)?;
-        let (matched, missing) = analysis
-            .map(|a| (a.matched.0, a.missing.0))
-            .unwrap_or_default();
-
-        let settings = settings::load(db).await.map_err(paused)?;
-        let job_for_prompt = JobForPrompt {
-            title: &job.title,
-            company: job.company.as_deref(),
-            location: job.location.as_deref(),
-            work_type: job.work_type.as_deref(),
-            description,
-            matched: &matched,
-            missing: &missing,
-        };
-        let (system, task_text, schema) = match task.kind {
-            Kind::Resume => (RESUME_SYSTEM, RESUME_TASK, resume_schema()),
-            Kind::CoverLetter => (LETTER_SYSTEM, LETTER_TASK, letter_schema()),
-        };
-        let user = user_prompt(&master, &job_for_prompt, task.note.as_deref(), task_text);
-
-        let started = Instant::now();
-        let value = self
-            .inner
-            .llm
-            .chat_json_with(
-                &settings.drafting_model,
-                system,
-                &user,
-                &schema,
-                ChatOptions {
-                    think: settings.drafting_think,
-                    num_ctx: Some(DRAFT_NUM_CTX),
-                },
-            )
-            .await
-            .map_err(|e| match e {
-                e if e.is_unavailable() => Failure::Paused(e.to_string()),
-                LlmError::BadAnswer(m) => Failure::Document(m),
-                e => Failure::Document(e.to_string()),
-            })?;
-        let duration_ms = started.elapsed().as_millis() as i32;
-
-        let check = CheckContext::new(
-            &master,
-            &job.title,
-            job.company.as_deref(),
-            job.location.as_deref(),
-        );
-        let bad_schema = |e: serde_json::Error| {
-            Failure::Document(format!("the answer doesn't match the schema: {e}"))
-        };
-        let (content, flags) = match task.kind {
-            Kind::Resume => {
-                let answer: ResumeAnswer = serde_json::from_value(value).map_err(bad_schema)?;
-                let (draft, notes) = assemble_resume(&master, answer);
-                let mut flags = check.check_resume(&draft);
-                flags.extend(note_flags(&notes));
-                (serde_json::to_value(draft).expect("serialisable"), flags)
-            }
-            Kind::CoverLetter => {
-                let answer: LetterAnswer = serde_json::from_value(value).map_err(bad_schema)?;
-                if answer.paragraphs.is_empty() {
-                    return Err(Failure::Document(
-                        "The model returned an empty letter.".into(),
-                    ));
-                }
-                let draft = assemble_letter(&master, answer);
-                let flags = check.check_letter(&draft);
-                (serde_json::to_value(draft).expect("serialisable"), flags)
-            }
-        };
+        .await?;
 
         sqlx::query(
             "UPDATE documents SET status = 'ready', content = $2, flags = $3, model = $4,
@@ -340,21 +246,200 @@ impl Drafter {
              WHERE id = $1",
         )
         .bind(task.id)
-        .bind(content)
-        .bind(Json(&flags))
-        .bind(&settings.drafting_model)
+        .bind(&written.content)
+        .bind(Json(&written.flags))
+        .bind(&written.model)
         .bind(PROMPT_VERSION)
-        .bind(resume.id)
-        .bind(duration_ms)
+        .bind(written.resume_id)
+        .bind(written.duration_ms)
         .execute(db)
         .await
         .map_err(|e| Failure::Document(format!("could not save the draft: {e}")))?;
 
-        tracing::info!(id = %task.id, kind = ?task.kind, duration_ms, flags = flags.len(), "document drafted");
+        tracing::info!(
+            id = %task.id,
+            kind = ?task.kind,
+            duration_ms = written.duration_ms,
+            flags = written.flags.len(),
+            "document drafted"
+        );
         Ok(())
     }
 
     fn update(&self, change: impl FnOnce(&mut DrafterState)) {
         change(&mut self.inner.state.lock().unwrap());
     }
+}
+
+/// A finished draft, not saved yet.
+pub(crate) struct Written {
+    pub content: serde_json::Value,
+    pub flags: Vec<super::check::Flag>,
+    pub words: usize,
+    pub duration_ms: i32,
+    pub resume_id: Uuid,
+    /// The model that wrote it (the local one past a monthly cap).
+    pub model: String,
+    pub cost_usd: Option<f64>,
+}
+
+/// Draft a `kind` document for a job with `model`. The drafting worker and
+/// the model comparison (`compare.rs`) both use it.
+pub(crate) async fn write_document(
+    db: &PgPool,
+    llm: &LlmClient,
+    job_id: &str,
+    kind: Kind,
+    note: Option<&str>,
+    model: &str,
+    think: bool,
+) -> Result<Written, Failure> {
+    let paused = |e: sqlx::Error| Failure::Paused(e.to_string());
+
+    let job: JobRow = sqlx::query_as(
+        "SELECT title, company, location, work_type, description_text FROM jobs WHERE id = $1",
+    )
+    .bind(job_id)
+    .fetch_one(db)
+    .await
+    .map_err(|e| Failure::Document(format!("could not load the job: {e}")))?;
+    let Some(description) = job.description_text.as_deref() else {
+        return Err(Failure::Document(
+            "The job has no description to tailor to.".into(),
+        ));
+    };
+
+    let resume = profile::current_resume(db)
+        .await
+        .map_err(paused)?
+        .ok_or_else(|| Failure::Paused("Add your resume on the Profile page first.".into()))?;
+    let master = MasterResume::parse(&resume.content);
+    if master.experience.is_empty() && master.projects.is_empty() {
+        return Err(Failure::Paused(
+            "Your resume needs an \"## Experience\" or \"## Projects\" section with \"### \" entries."
+                .into(),
+        ));
+    }
+
+    // The scoring model's analysis helps the model focus (an eval run's
+    // scores from other models don't count).
+    let analysis: Option<Analysis> = sqlx::query_as(
+        "SELECT matched, missing FROM job_scores WHERE job_id = $1
+         ORDER BY (model = (SELECT scoring_model FROM settings)) DESC, created_at DESC LIMIT 1",
+    )
+    .bind(job_id)
+    .fetch_optional(db)
+    .await
+    .map_err(paused)?;
+    let (matched, missing) = analysis
+        .map(|a| (a.matched.0, a.missing.0))
+        .unwrap_or_default();
+
+    let job_for_prompt = JobForPrompt {
+        title: &job.title,
+        company: job.company.as_deref(),
+        location: job.location.as_deref(),
+        work_type: job.work_type.as_deref(),
+        description,
+        matched: &matched,
+        missing: &missing,
+    };
+    let (system, task_text, schema) = match kind {
+        Kind::Resume => (RESUME_SYSTEM, RESUME_TASK, resume_schema()),
+        Kind::CoverLetter => (LETTER_SYSTEM, LETTER_TASK, letter_schema()),
+    };
+    let user = user_prompt(&master, &job_for_prompt, note, task_text);
+
+    let started = Instant::now();
+    let answer = llm
+        .chat_json_cost(
+            model,
+            system,
+            &user,
+            &schema,
+            ChatOptions {
+                think,
+                num_ctx: Some(DRAFT_NUM_CTX),
+            },
+        )
+        .await
+        .map_err(|e| match e {
+            e if e.is_unavailable() => Failure::Paused(e.to_string()),
+            LlmError::BadAnswer(m) => Failure::Document(m),
+            e => Failure::Document(e.to_string()),
+        })?;
+    let duration_ms = started.elapsed().as_millis() as i32;
+    let value = answer.value;
+
+    let check = CheckContext::new(
+        &master,
+        &job.title,
+        job.company.as_deref(),
+        job.location.as_deref(),
+    );
+    let bad_schema = |e: serde_json::Error| {
+        Failure::Document(format!("the answer doesn't match the schema: {e}"))
+    };
+    let (content, flags) = match kind {
+        Kind::Resume => {
+            let answer: ResumeAnswer = serde_json::from_value(value).map_err(bad_schema)?;
+            let (draft, notes) = assemble_resume(&master, answer);
+            let mut flags = check.check_resume(&draft);
+            flags.extend(note_flags(&notes));
+            (serde_json::to_value(draft).expect("serialisable"), flags)
+        }
+        Kind::CoverLetter => {
+            let answer: LetterAnswer = serde_json::from_value(value).map_err(bad_schema)?;
+            if answer.paragraphs.is_empty() {
+                return Err(Failure::Document(
+                    "The model returned an empty letter.".into(),
+                ));
+            }
+            let draft = assemble_letter(&master, answer);
+            let flags = check.check_letter(&draft);
+            (serde_json::to_value(draft).expect("serialisable"), flags)
+        }
+    };
+
+    let words = match kind {
+        Kind::Resume => resume_words(&content),
+        Kind::CoverLetter => content["paragraphs"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|p| p["text"].as_str())
+            .map(|t| t.split_whitespace().count())
+            .sum(),
+    };
+    Ok(Written {
+        content,
+        flags,
+        words,
+        duration_ms,
+        resume_id: resume.id,
+        model: answer.model,
+        cost_usd: answer.cost_usd,
+    })
+}
+
+/// Words in a resume draft's summary and bullets.
+fn resume_words(content: &serde_json::Value) -> usize {
+    fn count(value: &serde_json::Value) -> usize {
+        match value {
+            serde_json::Value::String(text) => text.split_whitespace().count(),
+            serde_json::Value::Array(items) => items.iter().map(count).sum(),
+            serde_json::Value::Object(map) => map
+                .iter()
+                .filter(|(key, _)| {
+                    matches!(
+                        key.as_str(),
+                        "summary" | "experience" | "projects" | "bullets" | "text"
+                    )
+                })
+                .map(|(_, v)| count(v))
+                .sum(),
+            _ => 0,
+        }
+    }
+    count(content)
 }

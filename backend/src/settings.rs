@@ -8,17 +8,18 @@ use sqlx::PgPool;
 use crate::{
     AppState,
     error::{AppError, AppResult},
+    llm::{Provider, provider_of},
 };
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Settings {
     /// Score new jobs automatically. Re-score and eval runs work either way.
     pub scoring_enabled: bool,
-    /// The Ollama model that scores jobs, e.g. "qwen3:14b".
+    /// The model that scores jobs: local ("qwen3:14b"), Claude or OpenAI.
     pub scoring_model: String,
     /// A job is relevant when its score is at least this and it has no hard blockers.
     pub relevance_threshold: i32,
-    /// The Ollama model that writes tailored documents.
+    /// The model that writes tailored documents and emails.
     pub drafting_model: String,
     /// Let the drafting model think before writing (slower, better).
     pub drafting_think: bool,
@@ -26,7 +27,8 @@ pub struct Settings {
     pub apply_parallel: i32,
     /// At most this many new applications in any 24 hours.
     pub apply_daily_cap: i32,
-    /// The Ollama model for form questions code can't answer.
+    /// The local model for form questions code can't answer. Never a paid
+    /// one: forms hold your details. Also used when a monthly cap is spent.
     pub apply_model: String,
     pub apply_think: bool,
     /// A second model call checks the model's answers before they go in.
@@ -36,7 +38,7 @@ pub struct Settings {
     pub auto_approve: bool,
     /// Draft a second follow-up 14 days after applying (the first is at 7).
     pub follow_up_second: bool,
-    /// The Ollama model behind the Ask page.
+    /// The model behind the Ask page.
     pub assistant_model: String,
     pub assistant_think: bool,
     pub updated_at: DateTime<Utc>,
@@ -90,6 +92,16 @@ pub async fn update(
         || assistant_model.as_deref().is_some_and(str::is_empty)
     {
         return Err(AppError::BadRequest("Model can't be empty.".into()));
+    }
+    // The apply agent reads form pages full of your details, so it stays on
+    // your own computer. It's also where calls go once a monthly cap is spent.
+    if apply_model
+        .as_deref()
+        .is_some_and(|m| provider_of(m) != Provider::Ollama)
+    {
+        return Err(AppError::BadRequest(
+            "The apply agent uses a local model only.".into(),
+        ));
     }
     if patch
         .relevance_threshold

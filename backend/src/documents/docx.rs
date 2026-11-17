@@ -128,7 +128,22 @@ fn entries(mut doc: Docx, title: &str, list: &[DraftEntry]) -> Docx {
         if !entry.details.is_empty() {
             doc = doc.add_paragraph(para(&entry.details.join(" | "), 20));
         }
+        let mut group: Option<&String> = None;
         for b in &entry.bullets {
+            if b.group.is_some() && b.group.as_ref() != group {
+                group = b.group.as_ref();
+                doc = doc.add_paragraph(
+                    Paragraph::new()
+                        .line_spacing(LineSpacing::new().before(60).after(20))
+                        .add_run(
+                            Run::new()
+                                .add_text(b.group.as_deref().unwrap_or(""))
+                                .bold()
+                                .italic()
+                                .size(21),
+                        ),
+                );
+            }
             doc = doc.add_paragraph(bullet(&b.text));
         }
     }
@@ -213,6 +228,7 @@ mod tests {
             summary: Line {
                 text: "Analyst.".into(),
                 evidence: vec![],
+                group: None,
             },
             experience: vec![DraftEntry {
                 heading: "Acme".into(),
@@ -220,6 +236,7 @@ mod tests {
                 bullets: vec![Line {
                     text: "Built reports.".into(),
                     evidence: vec![],
+                    group: None,
                 }],
                 ..DraftEntry::default()
             }],

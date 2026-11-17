@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useApi } from "@/hooks/use-api";
 import type { DraftEntry, JobDocuments, LetterDraft, ResumeDraft } from "@/lib/api";
+import { bulletGroups } from "@/lib/documents";
 
 import { InlineMarkdown as Inline } from "./inline-markdown";
 
@@ -32,13 +33,16 @@ function Entries({ title, entries }: { title: string; entries: DraftEntry[] }) {
               <Inline text={e.details.join(" | ")} />
             </p>
           ) : null}
-          {e.bullets.length ? (
-            <ul className="mt-0.5 list-disc pl-5">
-              {e.bullets.map((b, i) => (
-                <li key={i}>{b.text}</li>
-              ))}
-            </ul>
-          ) : null}
+          {bulletGroups(e.bullets).map((g) => (
+            <Fragment key={g.items[0].index}>
+              {g.group ? <p className="mt-1 font-semibold italic">{g.group}</p> : null}
+              <ul className="mt-0.5 list-disc pl-5">
+                {g.items.map(({ line, index }) => (
+                  <li key={index}>{line.text}</li>
+                ))}
+              </ul>
+            </Fragment>
+          ))}
         </div>
       ))}
     </>

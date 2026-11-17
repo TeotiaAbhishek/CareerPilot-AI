@@ -18,6 +18,7 @@ const STYLE: &str = r#"
   .details { font-size: 10pt; }
   ul { margin: 2pt 0 0; padding-left: 14pt; }
   li { margin: 0 0 1pt; }
+  .group { font-size: 10pt; font-weight: 600; font-style: italic; margin: 3pt 0 0; }
   p { margin: 0 0 3pt; }
   .letter p { margin: 0 0 9pt; font-size: 11pt; }
 "#;
@@ -75,11 +76,28 @@ fn entries(title: &str, list: &[DraftEntry]) -> String {
                 inline(&entry.details.join(" | "))
             ));
         }
-        if !entry.bullets.is_empty() {
-            out.push_str("<ul>");
-            for b in &entry.bullets {
-                out.push_str(&format!("<li>{}</li>", inline(&b.text)));
+        // One list per subheading (a project inside a job).
+        let mut group: Option<&String> = None;
+        let mut open = false;
+        for b in &entry.bullets {
+            if b.group.is_some() && b.group.as_ref() != group {
+                group = b.group.as_ref();
+                if open {
+                    out.push_str("</ul>");
+                    open = false;
+                }
+                out.push_str(&format!(
+                    "<div class=\"group\">{}</div>",
+                    escape(b.group.as_deref().unwrap_or(""))
+                ));
             }
+            if !open {
+                out.push_str("<ul>");
+                open = true;
+            }
+            out.push_str(&format!("<li>{}</li>", inline(&b.text)));
+        }
+        if open {
             out.push_str("</ul>");
         }
         out.push_str("</div>");
@@ -158,6 +176,7 @@ mod tests {
                 bullets: vec![Line {
                     text: "Cut report time by **40%**.".into(),
                     evidence: vec![],
+                    group: None,
                 }],
                 ..DraftEntry::default()
             }],
@@ -168,5 +187,30 @@ mod tests {
         assert!(html.contains("linkedin.com/in/jane"));
         assert!(html.contains("<h3>Acme &amp; Co</h3>"));
         assert!(html.contains("<strong>40%</strong>"));
+    }
+
+    #[test]
+    fn subheadings_split_the_bullets() {
+        let bullet = |text: &str, group: Option<&str>| Line {
+            text: text.into(),
+            evidence: vec![],
+            group: group.map(String::from),
+        };
+        let draft = ResumeDraft {
+            experience: vec![DraftEntry {
+                heading: "Independent".into(),
+                bullets: vec![
+                    bullet("Built it.", Some("Lakehouse")),
+                    bullet("Shipped it.", Some("Job app")),
+                    bullet("Tested it.", Some("Job app")),
+                ],
+                ..DraftEntry::default()
+            }],
+            ..ResumeDraft::default()
+        };
+        let html = resume_html(&draft);
+        assert!(html.contains(
+            "<div class=\"group\">Lakehouse</div><ul><li>Built it.</li></ul><div class=\"group\">Job app</div><ul><li>Shipped it.</li><li>Tested it.</li></ul>"
+        ), "{html}");
     }
 }

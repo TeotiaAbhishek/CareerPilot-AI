@@ -76,11 +76,12 @@ async fn scores_new_jobs_and_shows_them(db: PgPool) {
     common::insert_job(&db, "1", "Data Analyst", "Full time", 1).await;
     common::insert_job(&db, "2", "Citizen Data Scientist", "Full time", 2).await;
     common::insert_job(&db, "3", "Barista", "Casual/Vacation", 3).await;
-    common::insert_job(&db, "old", "Old Data Analyst", "Full time", 60).await;
+    common::insert_job(&db, "old", "Old Data Analyst", "Full time", 10).await;
     let ollama = fake_ollama().await;
     let (base, scorer) = common::spawn_scoring_app(db, &ollama).await;
 
-    // Newest first, then nothing left (the 60-day-old job is skipped).
+    // Newest first, then nothing left (only the last 7 days are scored
+    // automatically, so the 10-day-old job is skipped).
     assert_eq!(
         scorer.process_next().await.unwrap(),
         Step::Scored("1".into())
@@ -255,7 +256,9 @@ async fn labels_and_evals(db: PgPool) {
     common::insert_job(&db, "1", "Data Analyst", "Full time", 1).await;
     common::insert_job(&db, "2", "Barista", "Casual/Vacation", 2).await;
     common::insert_job(&db, "3", "Citizen Role", "Full time", 3).await;
-    // v1 thought the barista job was great.
+    // Too old for evals (more than 7 days), even with a label and a v1 score.
+    common::insert_job(&db, "old", "Old Analyst", "Full time", 20).await;
+    // v1 thought the barista job was great: evals no longer show v1.
     sqlx::query(
         "INSERT INTO legacy_job_analysis (job_id, relevance_score, kept, analysis, model, analysed_at)
          VALUES ('2', 90, true, '{\"hard_blockers\": []}', 'gpt-4.1-mini', now())",
@@ -267,7 +270,12 @@ async fn labels_and_evals(db: PgPool) {
     let (base, scorer) = common::spawn_scoring_app(db, &ollama).await;
 
     // Label: apply to the analyst job, not the barista one; maybe for the citizen one.
-    for (id, label) in [("1", "apply"), ("2", "no"), ("3", "maybe")] {
+    for (id, label) in [
+        ("1", "apply"),
+        ("2", "no"),
+        ("3", "maybe"),
+        ("old", "apply"),
+    ] {
         let response = send(
             reqwest::Method::PUT,
             format!("{base}/api/jobs/{id}/label"),
@@ -287,16 +295,25 @@ async fn labels_and_evals(db: PgPool) {
     let job = get_json(format!("{base}/api/jobs/2")).await;
     assert_eq!(job["label"], "no");
 
-    // Run an eval with a second model: all 3 labelled jobs are queued for it.
+    // Run an eval with a second model: the 3 recent labelled jobs are queued
+    // for it (the old one isn't). The active model already has them queued
+    // automatically, so naming it too adds nothing.
     let response = send(
         reqwest::Method::POST,
         format!("{base}/api/evals/run"),
-        json!({ "model": "qwen3:8b" }),
+        json!({ "models": ["qwen3:8b", "qwen3:8b"] }),
     )
     .await;
     assert_eq!(response.status(), 202);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["queued"], 3);
+    let response = send(
+        reqwest::Method::POST,
+        format!("{base}/api/evals/run"),
+        json!({ "models": [] }),
+    )
+    .await;
+    assert_eq!(response.status(), 400);
 
     // 3 requested (qwen3:8b) + 3 automatic (qwen3:14b), then idle.
     for _ in 0..6 {
@@ -308,17 +325,15 @@ async fn labels_and_evals(db: PgPool) {
     assert_eq!(scorer.process_next().await.unwrap(), Step::Idle);
 
     let report = get_json(format!("{base}/api/evals")).await;
-    assert_eq!(report["labels"]["total"], 3);
+    assert_eq!(report["labels"]["total"], 3, "the old job doesn't count");
+    assert_eq!(report["window"], "7 days");
     let rows = report["rows"].as_array().unwrap();
-    assert_eq!(rows.len(), 3); // qwen3:14b, qwen3:8b, v1
+    assert_eq!(rows.len(), 2); // qwen3:14b, qwen3:8b: no v1 row
 
     let active = rows.iter().find(|r| r["active"] == true).unwrap();
     assert_eq!(active["model"], "qwen3:14b");
     assert_eq!(active["metrics"]["agreement"], 1.0);
     assert_eq!(active["metrics"]["mean_score_maybe"], 80.0);
-
-    let v1 = rows.iter().find(|r| r["source"] == "v1").unwrap();
-    assert_eq!(v1["metrics"]["false_positive"], 1);
 
     // The fake model agrees with every apply/no label.
     assert_eq!(report["disagreements"].as_array().unwrap().len(), 0);

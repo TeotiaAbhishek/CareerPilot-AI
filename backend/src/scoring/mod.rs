@@ -1,9 +1,10 @@
-//! The scoring worker: one background task that scores jobs with a local
-//! model, one at a time (the GPU can only run one big model well).
+//! The scoring worker: one background task that scores jobs, one at a time
+//! (a local model on the GPU can only run one big model well; Claude and
+//! OpenAI models go through the same queue).
 //!
 //! What it picks, in order:
 //! 1. `score_requests` rows (the Re-score button and eval runs), oldest first.
-//! 2. If automatic scoring is on: jobs from the last 30 days that have no
+//! 2. If automatic scoring is on: jobs from the last 7 days that have no
 //!    score yet for the active model and prompt version, newest first.
 //!
 //! When there's nothing to do it sleeps until woken (`wake()`) or 30 s pass,
@@ -23,16 +24,25 @@ use sqlx::PgPool;
 use tokio::sync::Notify;
 
 use crate::{
-    llm::{LlmClient, LlmError},
+    apply::experience::{experience_block, total_years},
+    documents::resume::MasterResume,
+    llm::{ChatOptions, LlmClient, LlmError},
     profile, settings,
 };
-use prompt::{JobForPrompt, PROMPT_VERSION, SYSTEM_PROMPT, output_schema, user_prompt};
+use prompt::{
+    JobForPrompt, PROMPT_VERSION, SYSTEM_PROMPT, output_schema, resume_for_prompt, seniority_cap,
+    user_prompt,
+};
 
 /// Lists longer than this are cut: the UI shows them as chips.
 const MAX_ITEMS: usize = 8;
 const IDLE_WAIT: Duration = Duration::from_secs(30);
 /// Unscored jobs with no score this long after a failure are tried again.
 const RETRY_FAILED_AFTER: &str = "1 hour";
+/// Automatic scoring only looks at jobs listed (or first seen) this recently.
+/// Older ones keep their old scores; Re-score still works on any job.
+/// Evals only count labelled jobs from the same window.
+pub const AUTO_SCORE_WINDOW: &str = "7 days";
 
 #[derive(Clone)]
 pub struct Scorer {
@@ -75,6 +85,11 @@ pub enum Step {
 /// The model's answer, exactly as the schema asks for it.
 #[derive(Debug, Deserialize)]
 struct Answer {
+    /// Missing from older answers: then no cap applies.
+    #[serde(default)]
+    role_level: String,
+    #[serde(default)]
+    required_years: i64,
     score: i64,
     summary: String,
     matched_requirements: Vec<String>,
@@ -147,7 +162,21 @@ impl Scorer {
         let db = &self.inner.db;
         let settings = settings::load(db).await?;
 
-        let Some((job_id, model, requested)) = next_task(db, &settings).await? else {
+        // The scoring model, or the local one when its provider's monthly
+        // cap is spent: scores are saved under the model that made them.
+        let model = match self
+            .inner
+            .llm
+            .effective_model(&settings.scoring_model)
+            .await
+        {
+            Ok(model) => model,
+            Err(e) => {
+                self.update(|s| s.paused_reason = Some(e.to_string()));
+                return Ok(Step::Paused(e.to_string()));
+            }
+        };
+        let Some((job_id, model, requested)) = next_task(db, &settings, &model).await? else {
             self.update(|s| s.paused_reason = None);
             return Ok(Step::Idle);
         };
@@ -229,9 +258,12 @@ impl Scorer {
             ));
         }
         let profile = profile::profile_for_prompt(&facts);
+        let master = MasterResume::parse(&resume.content);
+        let today = Utc::now().date_naive();
 
         let user = user_prompt(
-            &resume.content,
+            &resume_for_prompt(&resume.content, &master.contact),
+            &experience_block(&master, today),
             &profile,
             &JobForPrompt {
                 title: &job.title,
@@ -243,10 +275,16 @@ impl Scorer {
         );
 
         let started = Instant::now();
-        let value = self
+        let answer = self
             .inner
             .llm
-            .chat_json(model, SYSTEM_PROMPT, &user, &output_schema())
+            .chat_json_cost(
+                model,
+                SYSTEM_PROMPT,
+                &user,
+                &output_schema(),
+                ChatOptions::default(),
+            )
             .await
             .map_err(|e| match e {
                 e if e.is_unavailable() => Failure::Paused(e.to_string()),
@@ -255,26 +293,47 @@ impl Scorer {
             })?;
         let duration_ms = started.elapsed().as_millis() as i32;
 
-        let answer: Answer = serde_json::from_value(value)
+        let cost_usd = answer.cost_usd;
+        // Saved under the model that answered (the local one past a cap).
+        let answered_by = answer.model;
+        let answer: Answer = serde_json::from_value(answer.value)
             .map_err(|e| Failure::Job(format!("answer doesn't match the schema: {e}")))?;
+
+        // The model reads the level and years off the ad; code compares them
+        // with yours and caps the score.
+        let model_score = answer.score.clamp(0, 100);
+        let cap = total_years(&master, today)
+            .and_then(|years| seniority_cap(&answer.role_level, answer.required_years, years));
+        let mut missing = answer.missing_requirements;
+        let (score, note) = match cap {
+            Some((cap, note)) if model_score > cap => {
+                missing.insert(0, note.clone());
+                (cap, Some(note))
+            }
+            _ => (model_score, None),
+        };
 
         sqlx::query(
             "INSERT INTO job_scores (job_id, model, prompt_version, score, summary,
                                      matched, missing, unknown, hard_blockers, duration_ms,
-                                     resume_version_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+                                     resume_version_id, cost_usd, model_score, seniority_note)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                     $12::float8::numeric, $13, $14)",
         )
         .bind(job_id)
-        .bind(model)
+        .bind(&answered_by)
         .bind(PROMPT_VERSION)
-        .bind(answer.score.clamp(0, 100) as i16)
+        .bind(score as i16)
         .bind(clean_summary(&answer.summary))
         .bind(sqlx::types::Json(clean_list(answer.matched_requirements)))
-        .bind(sqlx::types::Json(clean_list(answer.missing_requirements)))
+        .bind(sqlx::types::Json(clean_list(missing)))
         .bind(sqlx::types::Json(clean_list(answer.unknown_requirements)))
         .bind(sqlx::types::Json(clean_list(answer.hard_blockers)))
         .bind(duration_ms)
         .bind(resume.id)
+        .bind(cost_usd)
+        .bind(model_score as i16)
+        .bind(&note)
         .execute(db)
         .await
         .map_err(|e| Failure::Job(format!("could not save the score: {e}")))?;
@@ -285,7 +344,7 @@ impl Scorer {
             .await
             .map_err(|e| Failure::Job(e.to_string()))?;
 
-        tracing::info!(%job_id, %model, score = answer.score, duration_ms, "job scored");
+        tracing::info!(%job_id, %model, score, model_score, duration_ms, "job scored");
         Ok(())
     }
 
@@ -298,6 +357,7 @@ impl Scorer {
 async fn next_task(
     db: &PgPool,
     settings: &settings::Settings,
+    model: &str,
 ) -> sqlx::Result<Option<(String, String, bool)>> {
     let requested: Option<(String, String)> =
         sqlx::query_as("SELECT job_id, model FROM score_requests ORDER BY requested_at LIMIT 1")
@@ -313,19 +373,20 @@ async fn next_task(
     let job_id: Option<String> = sqlx::query_scalar(
         "SELECT id FROM jobs j
          WHERE scrape_status = 'ok' AND NOT hidden AND description_text IS NOT NULL
-           AND coalesce(listed_at, first_seen_at) > now() - interval '30 days'
+           AND coalesce(listed_at, first_seen_at) > now() - $4::interval
            AND (score_failed_at IS NULL OR score_failed_at < now() - $3::interval)
            AND NOT EXISTS (SELECT 1 FROM job_scores s
                            WHERE s.job_id = j.id AND s.model = $1 AND s.prompt_version = $2)
          ORDER BY coalesce(listed_at, first_seen_at) DESC
          LIMIT 1",
     )
-    .bind(&settings.scoring_model)
+    .bind(model)
     .bind(PROMPT_VERSION)
     .bind(RETRY_FAILED_AFTER)
+    .bind(AUTO_SCORE_WINDOW)
     .fetch_optional(db)
     .await?;
-    Ok(job_id.map(|id| (id, settings.scoring_model.clone(), false)))
+    Ok(job_id.map(|id| (id, model.to_string(), false)))
 }
 
 /// How many jobs automatic scoring still has to do (for the status card).
@@ -333,12 +394,13 @@ pub async fn unscored_count(db: &PgPool, model: &str) -> sqlx::Result<i64> {
     sqlx::query_scalar(
         "SELECT count(*) FROM jobs j
          WHERE scrape_status = 'ok' AND NOT hidden AND description_text IS NOT NULL
-           AND coalesce(listed_at, first_seen_at) > now() - interval '30 days'
+           AND coalesce(listed_at, first_seen_at) > now() - $3::interval
            AND NOT EXISTS (SELECT 1 FROM job_scores s
                            WHERE s.job_id = j.id AND s.model = $1 AND s.prompt_version = $2)",
     )
     .bind(model)
     .bind(PROMPT_VERSION)
+    .bind(AUTO_SCORE_WINDOW)
     .fetch_one(db)
     .await
 }

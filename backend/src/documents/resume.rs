@@ -48,6 +48,9 @@ pub struct Entry {
 pub struct Bullet {
     pub id: String,
     pub text: String,
+    /// The "#### " subheading it sits under, e.g. a project inside a job.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -110,6 +113,8 @@ impl MasterResume {
         let mut kind: Option<Kind> = None;
         let mut summary_lines: Vec<String> = Vec::new();
         let mut cert_count = 0;
+        // The current "#### " subheading inside a job, project or degree.
+        let mut group: Option<String> = None;
 
         for raw in markdown.lines() {
             let line = raw.trim();
@@ -118,6 +123,7 @@ impl MasterResume {
             }
 
             if let Some(heading) = line.strip_prefix("## ") {
+                group = None;
                 kind = Some(section_kind(heading));
                 if kind == Some(Kind::Other) {
                     resume.other.push(OtherSection {
@@ -148,6 +154,7 @@ impl MasterResume {
                         _ => (&mut resume.education, "ED"),
                     };
                     if let Some(heading) = line.strip_prefix("### ") {
+                        group = None;
                         list.push(Entry {
                             id: format!("{prefix}{}", list.len() + 1),
                             heading: heading.trim().to_string(),
@@ -162,11 +169,16 @@ impl MasterResume {
                             ..Entry::default()
                         });
                     }
+                    if let Some(sub) = line.strip_prefix("#### ") {
+                        group = Some(sub.trim().to_string()).filter(|g| !g.is_empty());
+                        continue;
+                    }
                     let entry = list.last_mut().expect("just ensured");
                     match bullet_text(line) {
                         Some(text) => entry.bullets.push(Bullet {
                             id: format!("{}.{}", entry.id, entry.bullets.len() + 1),
                             text: text.to_string(),
+                            group: group.clone(),
                         }),
                         None => entry.details.push(line.to_string()),
                     }
@@ -257,6 +269,7 @@ impl MasterResume {
             .chain(&self.education)
         {
             parts.extend(entry.details.iter().cloned());
+            parts.extend(groups(entry));
         }
         for section in &self.other {
             parts.push(section.heading.clone());
@@ -289,6 +302,17 @@ pub fn skill_line(group: &SkillGroup) -> String {
     } else {
         format!("{}: {}", group.group, group.items.join(", "))
     }
+}
+
+/// The subheadings inside an entry, in resume order, each once.
+pub fn groups(entry: &Entry) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for g in entry.bullets.iter().filter_map(|b| b.group.as_ref()) {
+        if !out.contains(g) {
+            out.push(g.clone());
+        }
+    }
+    out
 }
 
 /// "NPCI | Associate Data Scientist | Mumbai, India | Sep 2022 – Sep 2023"
@@ -413,5 +437,31 @@ Feb 2024 – Jan 2026
         let r = MasterResume::parse("# A\n\nb@c.com\n\n## Experience\n\n### X\n\n- did y\n");
         assert_eq!(r.contact, vec!["b@c.com"]);
         assert_eq!(r.experience[0].bullets[0].text, "did y");
+    }
+
+    #[test]
+    fn subheadings_group_the_bullets_under_them() {
+        let r = MasterResume::parse(
+            "## Experience\n\n### Independent\n\nFeb 2026 – Present\n\n#### Lakehouse\n\n* Built it.\n* Tested it.\n\n#### Job app\n\n* Shipped it.\n\n### Acme\n\n* Did y.\n",
+        );
+        let first = &r.experience[0];
+        assert_eq!(first.details, vec!["Feb 2026 – Present"]);
+        let got: Vec<_> = first
+            .bullets
+            .iter()
+            .map(|b| (b.id.as_str(), b.group.as_deref()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("W1.1", Some("Lakehouse")),
+                ("W1.2", Some("Lakehouse")),
+                ("W1.3", Some("Job app"))
+            ]
+        );
+        assert_eq!(groups(first), vec!["Lakehouse", "Job app"]);
+        // A new job starts without a subheading.
+        assert_eq!(r.experience[1].bullets[0].group, None);
+        assert!(r.full_text().contains("Job app"));
     }
 }

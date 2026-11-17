@@ -186,6 +186,17 @@ async fn moving_cards_feeds_the_insights(db: PgPool) {
     assert_eq!(c["column"], "submitted");
     assert!(c["applied_at"].is_string());
     assert!(c["replied_at"].is_null());
+    // The card shows the scoring model's score, even when an eval run
+    // scored the job with another model later.
+    sqlx::query(
+        "INSERT INTO job_scores (job_id, model, prompt_version, score, summary, matched, missing, duration_ms, created_at) VALUES
+         ('j1', 'qwen3:14b', 'v2-seniority', 70, 'Good fit.', '[]', '[]', 10, now() - interval '1 hour'),
+         ('j1', 'claude-haiku-5-5', 'v2-seniority', 95, 'Great fit.', '[]', '[]', 10, now())",
+    )
+    .execute(&db)
+    .await
+    .unwrap();
+    assert_eq!(card(&base, "j1").await["score"], 70);
     let c: Value = mv("j1", "interview").await.json().await.unwrap();
     assert!(c["replied_at"].is_string(), "the first reply is recorded");
     mv("j2", "submitted").await;

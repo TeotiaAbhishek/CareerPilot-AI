@@ -3,12 +3,14 @@
 //! the apply agents (F6).
 
 pub mod check;
+pub mod compare;
 pub mod docx;
 pub mod draft;
 pub mod html;
 pub mod pdf;
 pub mod prompt;
 pub mod resume;
+pub mod style;
 pub mod worker;
 
 use axum::{

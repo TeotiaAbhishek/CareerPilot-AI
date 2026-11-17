@@ -270,6 +270,7 @@ pub async fn ask(State(state): State<AppState>, Json(input): Json<Ask>) -> AppRe
             Message::Assistant {
                 content,
                 tool_calls: Vec::new(),
+                raw: None,
             }
         });
     }
@@ -416,6 +417,7 @@ pub async fn run_agent(
         messages.push(Message::Assistant {
             content: turn.content,
             tool_calls: calls.clone(),
+            raw: turn.raw,
         });
         for call in calls {
             let output = tools::run(db, settings, &call.name, &call.arguments)

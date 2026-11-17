@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Flag } from "./api";
-import { flagsAt, inlineMarkdown, move, openErrors, wordCount } from "./documents";
+import { bulletGroups, flagsAt, inlineMarkdown, move, openErrors, wordCount } from "./documents";
 
 const flags: Flag[] = [
   { key: "term|summary|AWS", path: "summary", severity: "error", message: "AWS" },
@@ -44,5 +44,18 @@ describe("helpers", () => {
   it("moves items and ignores moves off the end", () => {
     expect(move(["a", "b", "c"], 0, 1)).toEqual(["b", "a", "c"]);
     expect(move(["a", "b"], 0, -1)).toEqual(["a", "b"]);
+  });
+});
+
+describe("bulletGroups", () => {
+  it("starts a new group at each subheading and keeps indexes", () => {
+    const line = (text: string, group?: string) => ({ text, evidence: [], group });
+    const groups = bulletGroups([line("a"), line("b", "Lakehouse"), line("c", "Lakehouse"), line("d", "Job app")]);
+    expect(groups.map((g) => [g.group, g.items.map((i) => `${i.index}${i.line.text}`)])).toEqual([
+      [undefined, ["0a"]],
+      ["Lakehouse", ["1b", "2c"]],
+      ["Job app", ["3d"]],
+    ]);
+    expect(bulletGroups([])).toEqual([]);
   });
 });

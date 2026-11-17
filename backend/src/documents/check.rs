@@ -4,7 +4,8 @@
 //! 1. it cites at least one evidence id, and each id exists;
 //! 2. every number in it (80%, 300M+, 1:20) appears in the evidence it cites;
 //! 3. every name-like word (Snowflake, AWS, PySpark) appears somewhere in
-//!    your resume, or in the job's title, company or location.
+//!    your resume, or in the job's title, company or location;
+//! 4. it doesn't read as AI-written (see `style.rs`).
 //!
 //! "error" flags block approval until you fix the text or dismiss the flag.
 //! "info" flags are only for your attention.
@@ -342,6 +343,9 @@ impl CheckContext {
                 format!("\"{word}\" isn't anywhere in your resume."),
             );
         }
+
+        // Lines that read as AI-written (Wikipedia's "Signs of AI writing").
+        flags.extend(super::style::check(path, &line.text));
     }
 
     /// Fine unless it's a name-like word (has a capital) that isn't in your
@@ -476,6 +480,7 @@ mod tests {
         Line {
             text: text.into(),
             evidence: ids.iter().map(|s| s.to_string()).collect(),
+            group: None,
         }
     }
 

@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::resume::{Entry, MasterResume, OtherSection, SkillGroup};
+use super::resume::{Entry, MasterResume, OtherSection, SkillGroup, groups};
 
 /// One sentence, bullet or paragraph, with the evidence ids it relies on.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -17,6 +17,10 @@ pub struct Line {
     pub text: String,
     #[serde(default)]
     pub evidence: Vec<String>,
+    /// The subheading it sits under (a project inside a job). Set by code
+    /// from the evidence it cites, never by the model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -73,12 +77,18 @@ pub struct LetterAnswer {
     pub paragraphs: Vec<Line>,
 }
 
-/// v1's rule: no em or en dashes in generated text.
+/// No em or en dashes (a strong sign of AI writing) and straight quotes.
+/// "A — B" becomes "A, B"; "2019–2021" becomes "2019-2021".
 pub fn clean_text(text: &str) -> String {
-    text.replace(['—', '–'], "-")
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let text = text
+        .replace(['‘', '’'], "'")
+        .replace(['“', '”'], "\"")
+        .replace(" — ", ", ")
+        .replace(" – ", ", ")
+        .replace('—', ", ")
+        .replace('–', "-");
+    let joined = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    joined.replace(",,", ",").replace(" ,", ",")
 }
 
 fn clean_line(line: Line) -> Line {
@@ -92,6 +102,7 @@ fn clean_line(line: Line) -> Line {
     Line {
         text: clean_text(&line.text),
         evidence,
+        group: None,
     }
 }
 
@@ -103,8 +114,35 @@ fn original_bullets(entry: &Entry) -> Vec<Line> {
         .map(|b| Line {
             text: b.text.clone(),
             evidence: vec![b.id.clone()],
+            group: b.group.clone(),
         })
         .collect()
+}
+
+/// Put each bullet under the subheading of the first bullet it cites, and
+/// keep the subheadings in your order. Bullets keep their order within one.
+fn group_bullets(entry: &Entry, mut bullets: Vec<Line>) -> Vec<Line> {
+    let order = groups(entry);
+    if order.is_empty() {
+        return bullets;
+    }
+    for line in &mut bullets {
+        line.group = line.evidence.iter().find_map(|id| {
+            entry
+                .bullets
+                .iter()
+                .find(|b| &b.id == id)
+                .and_then(|b| b.group.clone())
+        });
+    }
+    // Lines without a subheading go first, straight under the job.
+    bullets.sort_by_key(|l| {
+        l.group
+            .as_ref()
+            .and_then(|g| order.iter().position(|o| o == g))
+            .map_or(0, |i| i + 1)
+    });
+    bullets
 }
 
 fn draft_entry(entry: &Entry, bullets: Vec<Line>) -> DraftEntry {
@@ -112,7 +150,7 @@ fn draft_entry(entry: &Entry, bullets: Vec<Line>) -> DraftEntry {
         id: entry.id.clone(),
         heading: entry.heading.clone(),
         details: entry.details.clone(),
-        bullets,
+        bullets: group_bullets(entry, bullets),
     }
 }
 
@@ -300,6 +338,7 @@ mod tests {
         Line {
             text: text.into(),
             evidence: ids.iter().map(|s| s.to_string()).collect(),
+            group: None,
         }
     }
 
@@ -328,7 +367,8 @@ mod tests {
         };
         let (draft, notes) = assemble_resume(&master(), answer);
 
-        assert_eq!(draft.summary, line("Analyst - SQL", &["S", "K1"]));
+        // A spaced dash becomes a comma.
+        assert_eq!(draft.summary, line("Analyst, SQL", &["S", "K1"]));
         assert_eq!(
             draft.skills,
             vec![SkillGroup {
@@ -362,5 +402,43 @@ mod tests {
         let (draft, _) = assemble_resume(&master(), answer);
         assert_eq!(draft.skills, master().skills);
         assert_eq!(draft.projects.len(), 2);
+    }
+
+    #[test]
+    fn bullets_go_back_under_their_subheadings() {
+        let master = MasterResume::parse(
+            "## Experience\n\n### Independent\n\n#### Lakehouse\n\n* Built it.\n\n#### Job app\n\n* Shipped it.\n* Tested it.\n",
+        );
+        let answer = ResumeAnswer {
+            summary: line("x", &["S"]),
+            skills: vec![],
+            // The model mixes the order up and invents a group: code fixes both.
+            experience: vec![EntryAnswer {
+                id: "W1".into(),
+                bullets: vec![
+                    line("Tested the job app.", &["W1.3"]),
+                    Line {
+                        group: Some("Made up".into()),
+                        ..line("Built a lakehouse.", &["W1.1"])
+                    },
+                    line("Shipped the job app.", &["W1.2"]),
+                ],
+            }],
+            projects: vec![],
+        };
+        let (draft, _) = assemble_resume(&master, answer);
+        let got: Vec<_> = draft.experience[0]
+            .bullets
+            .iter()
+            .map(|l| (l.group.as_deref(), l.text.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (Some("Lakehouse"), "Built a lakehouse."),
+                (Some("Job app"), "Tested the job app."),
+                (Some("Job app"), "Shipped the job app."),
+            ]
+        );
     }
 }
