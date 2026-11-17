@@ -70,6 +70,8 @@ pub enum ButtonKind {
     Submit,
     Next,
     Back,
+    /// "Apply now" on a job ad (a page with no form yet): opens the form.
+    Start,
     Other,
 }
 

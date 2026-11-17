@@ -585,6 +585,8 @@ impl Applier {
 
         let mut last_click: Option<String> = None;
         let mut stuck = 0;
+        // "Apply now" clicks on job ads, so a link that goes nowhere can't loop.
+        let mut opened_form = 0;
         // Optional fields nobody could answer: don't ask the model again.
         let mut skipped: HashSet<String> = HashSet::new();
         // Fields already filled once in this run. A checkbox answered "No", or
@@ -766,6 +768,33 @@ impl Applier {
             // New fields can appear after filling (an upload box after "Upload a
             // resumé"), so read the page again before moving on.
             if did_something {
+                continue;
+            }
+
+            // A job ad on the employer's site: "Apply now" opens the form.
+            // The worker only reports it as Start while the page has no form,
+            // and refuses the click if one has appeared since.
+            if snap.fields.is_empty()
+                && let Some(start) = snap.buttons.iter().find(|b| b.kind == ButtonKind::Start)
+            {
+                if opened_form >= 3 {
+                    return Ok(Outcome::Manual {
+                        reason: "stuck",
+                        message: format!(
+                            "Clicked \"{}\" 3 times and no form appeared. Finish this one yourself.",
+                            start.text
+                        ),
+                    });
+                }
+                opened_form += 1;
+                self.pause(800, 2000).await;
+                self.inner.browser.click(&tab, &start.id).await?;
+                self.log(
+                    run.id,
+                    "click",
+                    &format!("Clicked \"{}\" to open the application form.", start.text),
+                )
+                .await;
                 continue;
             }
 

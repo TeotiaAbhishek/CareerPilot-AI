@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { classifyButton } from "../src/buttons.ts";
+import { classifyButton, isStartButton } from "../src/buttons.ts";
 import { startServer, type Worker } from "../src/server.ts";
 import type { Snapshot } from "../src/types.ts";
 
@@ -47,6 +47,9 @@ describe("buttons", () => {
   it("treats anything that could send the application as submit", () => {
     expect(classifyButton("Submit application")).toBe("submit");
     expect(classifyButton("Apply now")).toBe("submit");
+    // Only a job ad (no form on the page) turns "Apply now" into a way in.
+    expect(isStartButton("Apply now")).toBe(true);
+    expect(isStartButton("Submit application")).toBe(false);
     expect(classifyButton("Review and submit")).toBe("submit");
     expect(classifyButton("Send")).toBe("submit");
     expect(classifyButton("Continue")).toBe("next");
@@ -177,6 +180,44 @@ describe("employer practice form", () => {
   });
 });
 
+describe("job ad on a careers site", () => {
+  it("follows a redirect chain, then opens the form from the ad's Apply now link", async () => {
+    const tab = await open("redirect?hops=3");
+    const ad = await snapshot(tab);
+    expect(ad.url).toMatch(/careers-ad/);
+    expect(ad.fields).toHaveLength(0);
+    const apply = button(ad, /^Apply now$/);
+    expect(apply.kind).toBe("start");
+
+    const res = await call<{ url: string }>("POST", `/tabs/${tab}/click`, { id: apply.id });
+    expect(res.status).toBe(200);
+    expect(res.data.url).toMatch(/employer-form/);
+    const form = await snapshot(tab);
+    expect(field(form, /^First name/).required).toBe(true);
+    expect(button(form, /Submit application/).kind).toBe("submit");
+    await call("DELETE", `/tabs/${tab}`);
+  });
+
+  it("carries on in the new tab when the ad opens the form there", async () => {
+    const tab = await open("careers-ad#newtab");
+    const apply = button(await snapshot(tab), /^Apply now$/);
+    const res = await call<{ url: string }>("POST", `/tabs/${tab}/click`, { id: apply.id });
+    expect(res.data.url).toMatch(/employer-form/);
+    expect((await snapshot(tab)).url).toMatch(/employer-form/);
+    await call("DELETE", `/tabs/${tab}`);
+  });
+
+  it("never clicks Apply now on a page that has a form: there it sends it", async () => {
+    const tab = await open("apply-form");
+    const snap = await snapshot(tab);
+    const apply = button(snap, /^Apply now$/);
+    expect(apply.kind).toBe("submit");
+    const res = await call<{ code: string }>("POST", `/tabs/${tab}/click`, { id: apply.id });
+    expect(res.status).toBe(409);
+    await call("DELETE", `/tabs/${tab}`);
+  });
+});
+
 describe("captcha", () => {
   it("notices a CAPTCHA box", async () => {
     const tab = await open("captcha");
@@ -283,6 +324,40 @@ describe("saved resumes", () => {
     const after = await list();
     expect(after.length).toBe(4);
     expect(after.some((r) => /20 days/.test(r.added))).toBe(false);
+    await call("DELETE", `/tabs/${tab}`);
+  });
+});
+
+describe("saved resumes, SEEK's options menu", () => {
+  it("opens the list, then deletes through Options, Delete and the confirmation", async () => {
+    const tab = await open("seek-resumes");
+    const prefixes = ["Test Person - Resume"];
+    const list = async () =>
+      (await call<{ resumes: { index: number; name: string; added: string }[] }>("POST", `/tabs/${tab}/resumes`, { prefixes }))
+        .data.resumes;
+    const before = await list();
+    expect(before.map((r) => r.name)).not.toContain("My own CV 2023.pdf");
+    expect(before.length).toBe(5);
+    expect(before.find((r) => /SEEK-95446655/.test(r.name))!.added).toBe("Added 10 days ago");
+
+    // The default resumé asks "Delete default resumé": that's confirmed too.
+    const oldest = before.find((r) => /20 days/.test(r.added))!;
+    const res = await call<{ deleted: boolean }>("POST", `/tabs/${tab}/delete-resume`, {
+      prefixes,
+      index: oldest.index,
+      name: oldest.name,
+    });
+    expect(res.data.deleted).toBe(true);
+    const next = (await list()).find((r) => /10 days/.test(r.added))!;
+    const again = await call<{ deleted: boolean }>("POST", `/tabs/${tab}/delete-resume`, {
+      prefixes,
+      index: next.index,
+      name: next.name,
+    });
+    expect(again.data.deleted).toBe(true);
+    const after = await list();
+    expect(after.length).toBe(3);
+    expect(after.some((r) => /(20|10) days/.test(r.added))).toBe(false);
     await call("DELETE", `/tabs/${tab}`);
   });
 });

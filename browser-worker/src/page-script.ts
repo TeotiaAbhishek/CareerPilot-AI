@@ -232,6 +232,8 @@ export function readPage(): PageSnapshot {
 
   // Links that act like buttons on login pages: "Create account", "Sign in".
   const authLink = /^(create (an |your )?account|sign ?up|register|sign ?in|log ?in|new user)\b/i;
+  // Links that open the application form from a job ad ("Apply now").
+  const startLink = /^(apply( now| online| here| for (this|the) (job|role|position))?|start (my |your |an |the )?application|begin (your |the )?application|i'?m interested)$/i;
   const buttons: PageSnapshot["buttons"] = [];
   for (const el of Array.from(
     document.querySelectorAll<HTMLElement>(
@@ -239,7 +241,8 @@ export function readPage(): PageSnapshot {
     ),
   )) {
     if (!isVisible(el) || (el as HTMLButtonElement).disabled || uploadButtons.has(el)) continue;
-    if (el.tagName === "A" && el.getAttribute("role") !== "button" && !authLink.test(clean(el.innerText))) {
+    const linkText = clean(el.innerText);
+    if (el.tagName === "A" && el.getAttribute("role") !== "button" && !authLink.test(linkText) && !startLink.test(linkText)) {
       continue;
     }
     const text = clean(

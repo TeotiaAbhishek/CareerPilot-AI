@@ -26,7 +26,8 @@ export interface Field {
   value: string;
 }
 
-export type ButtonKind = "submit" | "next" | "back" | "other";
+/** "start" opens the application form from a job ad ("Apply now" on a page with no form yet). */
+export type ButtonKind = "submit" | "next" | "back" | "start" | "other";
 
 export interface Button {
   id: string;

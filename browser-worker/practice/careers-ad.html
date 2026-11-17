@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Practice job ad: Data Analyst</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; background: #fafaf9; color: #1c1917; }
+  main { max-width: 620px; margin: 32px auto; padding: 0 20px; }
+  a.apply { display: inline-block; padding: 10px 18px; border-radius: 6px; background: #0f766e; color: #fff; text-decoration: none; }
+  nav a { margin-right: 12px; }
+</style>
+</head>
+<body>
+<nav><a href="#">Jobs</a><a href="#">About us</a><a href="#">Sign in</a></nav>
+<main>
+  <p>Practice careers site · not a real employer</p>
+  <h1>Data Analyst</h1>
+  <p>Sydney NSW · Full time</p>
+  <h2>About the role</h2>
+  <p>Build Power BI dashboards and SQL reporting for our finance team.</p>
+  <!-- Like ELMO and PageUp: the ad links to the form. "#newtab" opens it in a new tab. -->
+  <a class="apply" id="apply" href="/practice/employer-form">Apply now</a>
+  <script>
+    if (location.hash === "#newtab") document.getElementById("apply").target = "_blank";
+  </script>
+</main>
+</body>
+</html>
