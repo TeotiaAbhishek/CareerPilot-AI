@@ -329,6 +329,8 @@ pub async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<DocumentS
 pub struct DrafterStatus {
     pub model: String,
     pub think: bool,
+    /// How many pages a tailored resume can fill: 1 or 2.
+    pub resume_pages: i32,
     pub queued: i64,
     pub worker: worker::DrafterState,
 }
@@ -342,6 +344,7 @@ pub async fn status(State(state): State<AppState>) -> AppResult<Json<DrafterStat
     Ok(Json(DrafterStatus {
         model: settings.drafting_model,
         think: settings.drafting_think,
+        resume_pages: settings.resume_pages,
         queued,
         worker: state.drafter.state(),
     }))

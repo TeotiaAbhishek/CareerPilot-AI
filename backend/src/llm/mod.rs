@@ -22,6 +22,9 @@ pub use ollama::OllamaClient;
 pub use openai::OpenAiClient;
 pub use usage::Usage;
 
+/// The local model paid models fall back to when settings can't be read.
+const LOCAL_DEFAULT: &str = "qwen3:14b";
+
 /// Per-call options. A provider ignores the ones it has no use for.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ChatOptions {
@@ -327,20 +330,18 @@ impl LlmClient {
     }
 
     /// The model that will really answer: `model`, or your local apply model
-    /// when `model`'s provider has spent its monthly cap.
+    /// when `model`'s provider has no API key or has spent its monthly cap.
     async fn route(&self, model: &str) -> Result<String, LlmError> {
         let provider = provider_of(model);
         if provider == Provider::Ollama {
             return Ok(model.to_string());
         }
+        // No key (a fresh install with the default cloud models): use the
+        // local model, so everything still works without an account.
         if !self.has_key(provider.name()) {
-            let name = match provider {
-                Provider::Claude => "ANTHROPIC_API_KEY",
-                _ => "OPENAI_API_KEY",
-            };
-            return Err(LlmError::ModelMissing(format!(
-                "{model} needs {name} in backend/.env. Add it and restart the API, or pick another model in Settings."
-            )));
+            let fallback = self.local_model().await;
+            tracing::warn!(%model, %fallback, "no API key for this model, using the local model");
+            return Ok(fallback);
         }
         let Some(db) = &self.db else {
             return Ok(model.to_string());
@@ -348,16 +349,24 @@ impl LlmClient {
         match usage::over_cap(db, provider.name()).await {
             Ok(false) => Ok(model.to_string()),
             Ok(true) => {
-                let fallback: String = sqlx::query_scalar("SELECT apply_model FROM settings")
-                    .fetch_one(db)
-                    .await
-                    .unwrap_or_else(|_| "qwen3:14b".into());
+                let fallback = self.local_model().await;
                 tracing::warn!(%model, %fallback, "monthly cap reached, using the local model");
                 Ok(fallback)
             }
             Err(error) => Err(LlmError::Unreachable(format!(
                 "Couldn't check this month's spending: {error}"
             ))),
+        }
+    }
+
+    /// Your local apply model, the fallback for paid models.
+    async fn local_model(&self) -> String {
+        match &self.db {
+            Some(db) => sqlx::query_scalar("SELECT apply_model FROM settings")
+                .fetch_one(db)
+                .await
+                .unwrap_or_else(|_| LOCAL_DEFAULT.into()),
+            None => LOCAL_DEFAULT.into(),
         }
     }
 
@@ -538,12 +547,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_paid_model_without_its_key_says_what_to_set() {
+    async fn a_paid_model_without_its_key_falls_back_to_the_local_model() {
         let llm = LlmClient::from(OllamaClient::new("http://127.0.0.1:9", 8192).unwrap());
-        let error = llm
-            .chat_json("claude-haiku-5-5", "s", "u", &json!({}))
-            .await
-            .unwrap_err();
-        assert!(matches!(error, LlmError::ModelMissing(m) if m.contains("ANTHROPIC_API_KEY")));
+        assert_eq!(
+            llm.effective_model("claude-haiku-5-5").await.unwrap(),
+            "qwen3:14b"
+        );
+        assert_eq!(
+            llm.effective_model("gpt-6-luna").await.unwrap(),
+            "qwen3:14b"
+        );
+        assert_eq!(llm.effective_model("llama3:8b").await.unwrap(), "llama3:8b");
     }
 }

@@ -249,6 +249,26 @@ impl MasterResume {
         out
     }
 
+    /// The title line under your name, like "Data Scientist | Data Engineer |
+    /// Data Analyst": its index in `contact`, and the titles in it. None when
+    /// the resume has no such line (contact details never count).
+    pub fn headline(&self) -> Option<(usize, Vec<String>)> {
+        self.contact.iter().enumerate().find_map(|(i, line)| {
+            let plain = line.replace("**", "");
+            let looks_like_contact = plain.contains('@')
+                || plain.contains('[')
+                || plain.contains("http")
+                || plain.chars().any(|c| c.is_ascii_digit());
+            let titles: Vec<String> = plain
+                .split('|')
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+            let short = titles.iter().all(|t| t.split_whitespace().count() <= 5);
+            (!looks_like_contact && titles.len() >= 2 && short).then_some((i, titles))
+        })
+    }
+
     /// Every skill in the resume, lower-cased, for checking the model's skill list.
     pub fn all_skills(&self) -> Vec<String> {
         self.skills
@@ -288,12 +308,32 @@ fn parse_skill_line(text: &str) -> SkillGroup {
     };
     SkillGroup {
         group,
-        items: items
-            .split(',')
+        items: split_items(items)
+            .into_iter()
             .map(|s| s.trim().trim_end_matches('.').to_string())
             .filter(|s| !s.is_empty())
             .collect(),
     }
+}
+
+/// Split on commas, but not inside brackets: "Python (pandas, NumPy), SQL"
+/// is two skills, not three.
+fn split_items(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let (mut depth, mut start) = (0i32, 0);
+    for (i, c) in text.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = (depth - 1).max(0),
+            ',' if depth == 0 => {
+                out.push(&text[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&text[start..]);
+    out
 }
 
 pub fn skill_line(group: &SkillGroup) -> String {
@@ -463,5 +503,30 @@ Feb 2024 – Jan 2026
         // A new job starts without a subheading.
         assert_eq!(r.experience[1].bullets[0].group, None);
         assert!(r.full_text().contains("Job app"));
+    }
+
+    #[test]
+    fn commas_inside_brackets_stay_in_one_skill() {
+        let r = MasterResume::parse(
+            "## Skills\n\n* **Programming:** Python (pandas, NumPy), SQL\n* **BI:** Power BI (DAX, Power Query), Excel.\n",
+        );
+        assert_eq!(r.skills[0].items, vec!["Python (pandas, NumPy)", "SQL"]);
+        assert_eq!(
+            r.skills[1].items,
+            vec!["Power BI (DAX, Power Query)", "Excel"]
+        );
+    }
+
+    #[test]
+    fn finds_the_title_line_but_never_contact_details() {
+        let r = MasterResume::parse(
+            "# Jane\n\nData Scientist | Data Engineer\nSydney · 0400 000 000 · jane@x.com\n[LinkedIn](https://l.com) | [GitHub](https://g.com)\n\n## Summary\n\nx\n",
+        );
+        assert_eq!(
+            r.headline(),
+            Some((0, vec!["Data Scientist".into(), "Data Engineer".into()]))
+        );
+        let none = MasterResume::parse("# Jane\n\nSydney | 0400 000 000\n\n## Summary\n\nx\n");
+        assert_eq!(none.headline(), None);
     }
 }

@@ -47,7 +47,7 @@ export function DraftingSettings() {
       <CardHeader>
         <CardTitle>Tailored documents</CardTitle>
         <CardDescription>
-          The local model that drafts resumes and cover letters when you click Prepare application.
+          The model that drafts resumes and cover letters when you click Prepare application.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
@@ -92,6 +92,24 @@ export function DraftingSettings() {
                   ))}
                 </Select>
                 <span className="text-xs text-muted-foreground">Bigger models write better but slower.</span>
+              </label>
+
+              <label className="flex flex-col gap-1.5 text-sm">
+                <span className="font-medium">Resume length</span>
+                <Select
+                  value={String(data.resume_pages)}
+                  disabled={saving}
+                  onChange={(e) => {
+                    const pages = Number(e.target.value) as 1 | 2;
+                    save({ resume_pages: pages }, pages === 1 ? "Resumes fit one page" : "Resumes can fill two pages");
+                  }}
+                >
+                  <option value="2">Up to 2 pages</option>
+                  <option value="1">1 page</option>
+                </Select>
+                <span className="text-xs text-muted-foreground">
+                  The model writes to this length, and the PDF leaves out the oldest bullets if it runs over.
+                </span>
               </label>
 
               <div className="flex items-start justify-between gap-4">

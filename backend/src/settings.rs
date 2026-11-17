@@ -23,6 +23,8 @@ pub struct Settings {
     pub drafting_model: String,
     /// Let the drafting model think before writing (slower, better).
     pub drafting_think: bool,
+    /// How many pages a tailored resume can fill: 1 or 2.
+    pub resume_pages: i32,
     /// How many applications the agent fills at once (one browser tab each).
     pub apply_parallel: i32,
     /// At most this many new applications in any 24 hours.
@@ -47,7 +49,7 @@ pub struct Settings {
 pub async fn load(db: &PgPool) -> sqlx::Result<Settings> {
     sqlx::query_as(
         "SELECT scoring_enabled, scoring_model, relevance_threshold, drafting_model, drafting_think,
-                apply_parallel, apply_daily_cap, apply_model, apply_think, apply_review,
+                resume_pages, apply_parallel, apply_daily_cap, apply_model, apply_think, apply_review,
                 auto_approve, follow_up_second, assistant_model, assistant_think, updated_at
          FROM settings",
     )
@@ -67,6 +69,7 @@ pub struct SettingsPatch {
     pub relevance_threshold: Option<i32>,
     pub drafting_model: Option<String>,
     pub drafting_think: Option<bool>,
+    pub resume_pages: Option<i32>,
     pub apply_parallel: Option<i32>,
     pub apply_daily_cap: Option<i32>,
     pub apply_model: Option<String>,
@@ -109,6 +112,9 @@ pub async fn update(
     {
         return Err(AppError::BadRequest("Threshold must be 0-100.".into()));
     }
+    if patch.resume_pages.is_some_and(|n| !(1..=2).contains(&n)) {
+        return Err(AppError::BadRequest("A resume can be 1 or 2 pages.".into()));
+    }
     if patch.apply_parallel.is_some_and(|n| !(1..=5).contains(&n)) {
         return Err(AppError::BadRequest(
             "Applications at once must be 1-5.".into(),
@@ -137,9 +143,10 @@ pub async fn update(
             follow_up_second = coalesce($12, follow_up_second),
             assistant_model = coalesce($13, assistant_model),
             assistant_think = coalesce($14, assistant_think),
+            resume_pages = coalesce($15, resume_pages),
             updated_at = now()
          RETURNING scoring_enabled, scoring_model, relevance_threshold, drafting_model,
-                   drafting_think, apply_parallel, apply_daily_cap, apply_model, apply_think,
+                   drafting_think, resume_pages, apply_parallel, apply_daily_cap, apply_model, apply_think,
                    apply_review, auto_approve, follow_up_second, assistant_model,
                    assistant_think, updated_at",
     )
@@ -157,6 +164,7 @@ pub async fn update(
     .bind(patch.follow_up_second)
     .bind(assistant_model)
     .bind(patch.assistant_think)
+    .bind(patch.resume_pages)
     .fetch_one(&state.db)
     .await?;
 

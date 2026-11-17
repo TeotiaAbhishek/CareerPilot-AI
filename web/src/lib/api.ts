@@ -166,6 +166,8 @@ export type Settings = {
   relevance_threshold: number;
   drafting_model: string;
   drafting_think: boolean;
+  /** How many pages a tailored resume can fill. */
+  resume_pages: 1 | 2;
   apply_parallel: number;
   apply_daily_cap: number;
   apply_model: string;
@@ -498,6 +500,7 @@ export type DocumentSummary = {
 export type DrafterStatus = {
   model: string;
   think: boolean;
+  resume_pages: 1 | 2;
   queued: number;
   worker: {
     current: { document_id: string; job_id: string; kind: DocumentKind; started_at: string } | null;
@@ -768,7 +771,7 @@ export const approveDocument = (id: string) => apiSend<DocumentView>("POST", `/a
 export const docxUrl = (id: string) => `${API_URL}/api/documents/${id}/docx`;
 export const startApplication = (jobId: string) =>
   apiSend<ApplicationView>("POST", `/api/jobs/${encodeURIComponent(jobId)}/apply`);
-/** A plain link downloads the PDF (fitted to one page). */
+/** A plain link downloads the PDF (fitted to your page limit). */
 export const pdfUrl = (id: string) => `${API_URL}/api/documents/${id}/pdf`;
 export const checkPdf = (id: string) =>
   apiGet<PdfCheck>(`/api/documents/${id}/pdf-check`, { cache: "no-store" });

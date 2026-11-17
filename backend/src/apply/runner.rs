@@ -461,7 +461,7 @@ impl Applier {
         let Some(resume_id) = run.resume_id else {
             return Err(RunError::Failed("No approved resume for this job.".into()));
         };
-        // PDFs, printed by the worker. The resume is fitted to one page.
+        // PDFs, printed by the worker. The resume is fitted to your page limit.
         let browser = &self.inner.browser;
         // The worker prints them, so a stopped worker puts the run back in the queue.
         let failed = |what: &str, e: AppError| match e {
@@ -476,7 +476,7 @@ impl Applier {
                 run.id,
                 "info",
                 &format!(
-                    "To fit the resume on one page, the PDF leaves out {}.",
+                    "To fit your page limit, the resume PDF leaves out {}.",
                     plural(resume.left_out.len(), "bullet")
                 ),
             )
