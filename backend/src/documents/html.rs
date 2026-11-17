@@ -3,22 +3,27 @@
 //! layout as the .docx: real text, no tables, columns or images.
 
 use super::docx::runs;
-use super::draft::{DraftEntry, LetterDraft, ResumeDraft};
+use super::draft::{DraftEntry, LetterDraft, ResumeDraft, split_headline};
 use super::resume::skill_line;
 
 const STYLE: &str = r#"
   * { box-sizing: border-box; }
   body { margin: 0; color: #111; font: 10.5pt/1.35 Calibri, Carlito, "Segoe UI", Arial, sans-serif; }
   h1 { font-size: 20pt; margin: 0 0 2pt; }
-  .contact { font-size: 9.5pt; margin-bottom: 6pt; }
+  .headline { font-size: 13pt; font-weight: 700; color: #1f4e79; margin: 0 0 3pt; }
+  .contact { font-size: 10pt; margin-bottom: 6pt; }
   h2 { font-size: 11pt; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid #999;
        margin: 9pt 0 4pt; padding-bottom: 1pt; }
-  .entry { margin-top: 4pt; break-inside: avoid; }
-  .entry h3 { font-size: 10.5pt; margin: 0; }
+  .entry { margin-top: 6pt; }
+  /* A long job may run onto the next page, but a heading, its dates or a
+     subheading never sits alone at the bottom of one. */
+  h2, .entry h3, .details, .group { break-after: avoid; }
+  li { break-inside: avoid; }
+  .entry h3 { font-size: 11pt; margin: 0; }
   .details { font-size: 10pt; }
   ul { margin: 2pt 0 0; padding-left: 14pt; }
   li { margin: 0 0 1pt; }
-  .group { font-size: 10pt; font-weight: 600; font-style: italic; margin: 3pt 0 0; }
+  .group { font-size: 10.5pt; font-weight: 700; color: #1f4e79; margin: 5pt 0 0; }
   p { margin: 0 0 3pt; }
   .letter p { margin: 0 0 9pt; font-size: 11pt; }
 "#;
@@ -53,10 +58,15 @@ fn page(title: &str, body: &str) -> String {
 
 fn header(name: &str, contact: &[String]) -> String {
     let mut out = format!("<h1>{}</h1>", escape(name));
+    let (headline, contact) = split_headline(contact);
+    if let Some(title) = headline {
+        out.push_str(&format!("<div class=\"headline\">{}</div>", escape(title)));
+    }
     if !contact.is_empty() {
+        let lines: Vec<&str> = contact.iter().map(|l| l.as_str()).collect();
         out.push_str(&format!(
             "<div class=\"contact\">{}</div>",
-            inline(&contact.join(" | "))
+            inline(&lines.join(" | "))
         ));
     }
     out

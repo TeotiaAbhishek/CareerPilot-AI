@@ -6,7 +6,7 @@ use docx_rs::{
     Numbering, NumberingId, PageMargin, Paragraph, Run, RunFonts, SpecialIndentType, Start,
 };
 
-use super::draft::{DraftEntry, LetterDraft, ResumeDraft};
+use super::draft::{DraftEntry, LetterDraft, ResumeDraft, split_headline};
 use super::resume::skill_line;
 
 const FONT: &str = "Calibri";
@@ -108,8 +108,17 @@ fn header(mut doc: Docx, name: &str, contact: &[String]) -> Docx {
             .line_spacing(LineSpacing::new().after(40))
             .add_run(Run::new().add_text(name).bold().size(36)),
     );
+    let (headline, contact) = split_headline(contact);
+    if let Some(title) = headline {
+        doc = doc.add_paragraph(
+            Paragraph::new()
+                .line_spacing(LineSpacing::new().after(40))
+                .add_run(Run::new().add_text(title).bold().color("1F4E79").size(26)),
+        );
+    }
     if !contact.is_empty() {
-        doc = doc.add_paragraph(para(&contact.join(" | "), 19));
+        let lines: Vec<&str> = contact.iter().map(|l| l.as_str()).collect();
+        doc = doc.add_paragraph(para(&lines.join(" | "), 20));
     }
     doc
 }
@@ -139,7 +148,7 @@ fn entries(mut doc: Docx, title: &str, list: &[DraftEntry]) -> Docx {
                             Run::new()
                                 .add_text(b.group.as_deref().unwrap_or(""))
                                 .bold()
-                                .italic()
+                                .color("1F4E79")
                                 .size(21),
                         ),
                 );

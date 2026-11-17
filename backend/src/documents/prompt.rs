@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use super::resume::{MasterResume, entry_line, skill_line};
 
 /// Bump when a prompt changes, so drafts record which prompt wrote them.
-pub const PROMPT_VERSION: &str = "v2-recruiter";
+pub const PROMPT_VERSION: &str = "v2-summary";
 
 /// Rules against text that reads as AI-written, from Wikipedia's "Signs of
 /// AI writing". Shared by resumes, cover letters and emails; `style.rs`
@@ -41,9 +41,9 @@ HOW A RECRUITER READS IT:
 
 YOU MAY:
 - choose the headline: the ONE title from HEADLINE OPTIONS that best fits the job, copied exactly
-- rewrite the professional summary (2-3 sentences)
+- write the professional summary: 3 sentences, 45-70 words. First, the headline title you chose and what the candidate does, in the job's own terms. Second, the strongest evidence for THIS job, with its number. Third, the most relevant recent project and the degree. Never open with \"Data professional\", and don't list every tool
 - order the skills so the job's ones come first (code adds back any you leave out)
-- rewrite, reorder or drop bullets under each job, to emphasise what the job asks for
+- rewrite and reorder bullets under each job, to emphasise what the job asks for; drop only weaker projects or bullets of the most recent role
 - use the job's wording where the evidence supports it
 
 YOU MUST NOT:
@@ -226,8 +226,8 @@ TASK
 pub fn resume_task(pages: i32) -> String {
     let length = if pages >= 2 {
         "LENGTH: two full pages. For the most recent role, keep 3-5 bullets for each of the 3-5 projects \
-or subheadings most relevant to the job. Keep 4-5 bullets for the next role and 2-4 for older ones. \
-Use the evidence: don't pad."
+or subheadings most relevant to the job. Rewrite every bullet of the older roles toward the job \
+(code adds back any you leave out). Use the evidence: don't pad."
     } else {
         "LENGTH: one page. Keep 2-3 bullets for each of the 2-3 most relevant projects or subheadings \
 of the most recent role, 3-4 for the next role and 2-3 for older ones."

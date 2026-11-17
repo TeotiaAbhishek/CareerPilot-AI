@@ -255,6 +255,37 @@ pub fn arrange_skills(draft: &mut ResumeDraft, master: &MasterResume, job_text: 
     }
 }
 
+/// On a two-page resume nothing from your jobs goes missing: every bullet of
+/// the older jobs, and your certifications, come back in your own words when
+/// the model dropped them, each under its subheading. In the most recent role
+/// (a project per subheading) the model's picks stand.
+pub fn keep_job_bullets(draft: &mut ResumeDraft, master: &MasterResume) {
+    for (i, entry) in master.experience.iter().enumerate() {
+        let Some(out) = draft.experience.iter_mut().find(|e| e.id == entry.id) else {
+            continue;
+        };
+        let cited: Vec<String> = out
+            .bullets
+            .iter()
+            .flat_map(|l| l.evidence.clone())
+            .collect();
+        let missing: Vec<Line> = original_bullets(entry)
+            .into_iter()
+            .filter(|l| !cited.contains(&l.evidence[0]))
+            .filter(|l| {
+                i > 0
+                    || l.group
+                        .as_deref()
+                        .is_some_and(|g| g.to_lowercase().starts_with("certification"))
+            })
+            .collect();
+        if !missing.is_empty() {
+            out.bullets.extend(missing);
+            out.bullets = group_bullets(entry, std::mem::take(&mut out.bullets));
+        }
+    }
+}
+
 /// Your contact lines with the headline cut to the one title the model
 /// picked for this job. A title that isn't one of yours becomes your first.
 fn resume_contact(master: &MasterResume, picked: Option<&str>) -> Vec<String> {
@@ -268,6 +299,30 @@ fn resume_contact(master: &MasterResume, picked: Option<&str>) -> Vec<String> {
         contact[i] = title.clone();
     }
     contact
+}
+
+/// Split a resume's contact lines into the headline (the one job title code
+/// put there, e.g. "Data Engineer") and the rest, so it can be shown larger.
+pub fn split_headline(contact: &[String]) -> (Option<&String>, Vec<&String>) {
+    let is_title = |line: &String| {
+        !line.is_empty()
+            && line.split_whitespace().count() <= 5
+            && !line
+                .chars()
+                .any(|c| c.is_ascii_digit() || "@[|·,:/".contains(c))
+    };
+    match contact.iter().position(is_title) {
+        Some(i) => (
+            Some(&contact[i]),
+            contact
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, l)| l)
+                .collect(),
+        ),
+        None => (None, contact.iter().collect()),
+    }
 }
 
 /// A letter's header has no headline, only your contact details.
@@ -681,5 +736,82 @@ mod tests {
                 (Some("Job app"), vec!["W1".to_string()]),
             ]
         );
+    }
+
+    #[test]
+    fn two_pages_keep_every_older_job_bullet_and_your_certifications() {
+        let master = MasterResume::parse(
+            "## Experience\n\n### Independent\n\n#### Lakehouse\n\n* Built a lakehouse.\n* Tested it.\n\n#### Certifications\n\n* SQL (Advanced).\n\n### NPCI\n\n#### Fraud modelling\n\n* Built a model.\n\n#### Fraud reporting\n\n* Automated reports.\n* Built dashboards.\n\n### Capgemini\n\n* Built ETL.\n* Built reports.\n",
+        );
+        let answer = ResumeAnswer {
+            headline: None,
+            summary: line("x", &["S"]),
+            skills: vec![],
+            experience: vec![
+                EntryAnswer {
+                    id: "W1".into(),
+                    bullets: vec![line("Built a Databricks lakehouse.", &["W1.1"])],
+                },
+                EntryAnswer {
+                    id: "W2".into(),
+                    bullets: vec![
+                        line("Built dashboards for banks.", &["W2.3"]),
+                        line("Built a fraud model.", &["W2.1"]),
+                    ],
+                },
+                EntryAnswer {
+                    id: "W3".into(),
+                    bullets: vec![line("Built SQL ETL.", &["W3.1"])],
+                },
+            ],
+            projects: vec![],
+        };
+        let (mut draft, _) = assemble_resume(&master, answer);
+        keep_job_bullets(&mut draft, &master);
+        let texts = |i: usize| -> Vec<(Option<String>, String)> {
+            draft.experience[i]
+                .bullets
+                .iter()
+                .map(|l| (l.group.clone(), l.text.clone()))
+                .collect()
+        };
+        let g = |group: Option<&str>, text: &str| (group.map(String::from), text.to_string());
+        // The most recent role: the model's picks, plus your certifications.
+        assert_eq!(
+            texts(0),
+            vec![
+                g(Some("Lakehouse"), "Built a Databricks lakehouse."),
+                g(Some("Certifications"), "SQL (Advanced)."),
+            ]
+        );
+        // Older jobs: everything, the model's wording first in each subheading.
+        assert_eq!(
+            texts(1),
+            vec![
+                g(Some("Fraud modelling"), "Built a fraud model."),
+                g(Some("Fraud reporting"), "Built dashboards for banks."),
+                g(Some("Fraud reporting"), "Automated reports."),
+            ]
+        );
+        assert_eq!(
+            texts(2),
+            vec![g(None, "Built SQL ETL."), g(None, "Built reports.")]
+        );
+    }
+
+    #[test]
+    fn the_headline_is_split_from_the_contact_lines() {
+        let contact = vec![
+            "Data Engineer".to_string(),
+            "Sydney, NSW · 0400 000 000 · a@b.com".to_string(),
+            "[LinkedIn](https://x) · [GitHub](https://y)".to_string(),
+        ];
+        let (headline, rest) = split_headline(&contact);
+        assert_eq!(headline.map(String::as_str), Some("Data Engineer"));
+        assert_eq!(rest.len(), 2);
+        // A letter's contact lines have no title.
+        let (headline, rest) = split_headline(&contact[1..]);
+        assert_eq!(headline, None);
+        assert_eq!(rest.len(), 2);
     }
 }

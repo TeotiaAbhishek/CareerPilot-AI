@@ -107,6 +107,14 @@ fn bullet_text(line: &str) -> Option<&str> {
         .map(str::trim)
 }
 
+/// The text of a Markdown heading of exactly `level` hashes ("#### Mini Dify"
+/// at level 4). Any space counts after the hashes, including the non-breaking
+/// space that copying from a web page or Word can leave there.
+fn heading_text(line: &str, level: usize) -> Option<&str> {
+    let rest = line.strip_prefix(&"#".repeat(level)[..])?;
+    rest.starts_with(char::is_whitespace).then_some(rest)
+}
+
 impl MasterResume {
     pub fn parse(markdown: &str) -> Self {
         let mut resume = MasterResume::default();
@@ -122,7 +130,7 @@ impl MasterResume {
                 continue;
             }
 
-            if let Some(heading) = line.strip_prefix("## ") {
+            if let Some(heading) = heading_text(line, 2) {
                 group = None;
                 kind = Some(section_kind(heading));
                 if kind == Some(Kind::Other) {
@@ -133,7 +141,7 @@ impl MasterResume {
                 }
                 continue;
             }
-            if let Some(name) = line.strip_prefix("# ") {
+            if let Some(name) = heading_text(line, 1) {
                 if resume.name.is_empty() {
                     resume.name = name.trim().to_string();
                 }
@@ -153,7 +161,7 @@ impl MasterResume {
                         Kind::Projects => (&mut resume.projects, "P"),
                         _ => (&mut resume.education, "ED"),
                     };
-                    if let Some(heading) = line.strip_prefix("### ") {
+                    if let Some(heading) = heading_text(line, 3) {
                         group = None;
                         list.push(Entry {
                             id: format!("{prefix}{}", list.len() + 1),
@@ -169,7 +177,7 @@ impl MasterResume {
                             ..Entry::default()
                         });
                     }
-                    if let Some(sub) = line.strip_prefix("#### ") {
+                    if let Some(sub) = heading_text(line, 4) {
                         group = Some(sub.trim().to_string()).filter(|g| !g.is_empty());
                         continue;
                     }
@@ -528,5 +536,17 @@ Feb 2024 – Jan 2026
         );
         let none = MasterResume::parse("# Jane\n\nSydney | 0400 000 000\n\n## Summary\n\nx\n");
         assert_eq!(none.headline(), None);
+    }
+
+    #[test]
+    fn headings_with_a_non_breaking_space_still_count() {
+        let r = MasterResume::parse(
+            "## Experience\n\n###\u{a0}Independent\n\n####\u{a0}Lakehouse\n\n* Built it.\n",
+        );
+        assert_eq!(r.experience[0].heading, "Independent");
+        assert_eq!(
+            r.experience[0].bullets[0].group.as_deref(),
+            Some("Lakehouse")
+        );
     }
 }
